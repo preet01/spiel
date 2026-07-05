@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spiel</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="#FF385C">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+        </svg>
+        Spiel
+      </div>
+      <div class="server-status" id="server-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-label" id="status-label">Checking…</span>
+      </div>
+    </div>
+
+    <!-- Idle card -->
+    <div class="idle-card" id="card-idle">
+      <svg class="idle-icon" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+      </svg>
+      <p class="status-hint">Open any article, then click <strong>Play</strong>. Or select any text on the page for instant reading.</p>
+    </div>
+
+    <!-- Playing card -->
+    <div class="playing-card hidden" id="card-playing">
+      <div class="article-title" id="article-title">—</div>
+      <div class="sentence-preview" id="sentence-preview">…</div>
+      <div class="progress-row">
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <span class="progress-text" id="progress-text">0 / 0</span>
+        <span class="progress-text" id="time-left" title="Estimated time left at current speed"></span>
+      </div>
+    </div>
+
+    <!-- Setup card: voice engine not installed yet -->
+    <div class="setup-card hidden" id="card-setup">
+      <p class="setup-title">One more step — install the voice</p>
+      <p class="setup-desc">Spiel's AI voice runs 100% on your Mac — private and free. Paste this in the <strong>Terminal</strong> app:</p>
+      <div class="setup-cmd" id="setup-cmd" title="Click to copy">
+        <code id="setup-cmd-text">curl -fsSL https://raw.githubusercontent.com/preet01/spiel/main/install.sh | bash</code>
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-copy-cmd">Copy command</button>
+      <p class="setup-hint">Takes ~2 minutes. This screen updates by itself when the voice is ready. <a href="https://github.com/preet01/spiel#install" target="_blank" rel="noopener">Need help?</a></p>
+    </div>
+
+    <!-- Error card -->
+    <div class="error-card hidden" id="card-error">
+      <svg class="error-icon" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+      </svg>
+      <p class="error-msg" id="error-msg">Something went wrong.</p>
+    </div>
+
+    <!-- Settings -->
+    <div class="settings-section">
+      <div class="setting-row">
+        <label class="setting-label" for="voice-select">Voice</label>
+        <select class="voice-select" id="voice-select">
+          <option value="af_heart">Heart — American female · warm</option>
+          <option value="af_bella">Bella — American female · expressive</option>
+          <option value="am_michael">Michael — American male · deep</option>
+          <option value="bf_emma">Emma — British female · calm</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Speed</span>
+        <div class="chips" id="speed-chips"></div>
+      </div>
+      <div class="setting-row" title="Applied the next time you press Play">
+        <span class="setting-label">Skip</span>
+        <label class="skip-toggle"><input type="checkbox" id="skip-urls"> URLs</label>
+        <label class="skip-toggle"><input type="checkbox" id="skip-brackets"> [refs]</label>
+        <label class="skip-toggle"><input type="checkbox" id="skip-parens"> (parens)</label>
+      </div>
+    </div>
+
+    <!-- Controls: Idle -->
+    <div class="controls" id="controls-idle">
+      <button class="btn btn-primary btn-full" id="btn-play">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Play This Page
+      </button>
+    </div>
+
+    <!-- Controls: Playing -->
+    <div class="controls hidden" id="controls-playing">
+      <div class="control-row">
+        <button class="btn btn-icon" id="btn-prev" title="Previous sentence">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+        </button>
+        <button class="btn btn-primary btn-wide" id="btn-pause">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          Pause
+        </button>
+        <button class="btn btn-icon" id="btn-next" title="Next sentence">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </button>
+      </div>
+      <button class="btn btn-ghost btn-full" id="btn-stop">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+        Stop
+      </button>
+    </div>
+
+    <!-- Controls: Loading -->
+    <div class="controls hidden" id="controls-loading">
+      <button class="btn btn-primary btn-full btn-loading" disabled>
+        <span class="spinner"></span>
+        Generating audio…
+      </button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      Listen to anything. Instantly.
+    </div>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

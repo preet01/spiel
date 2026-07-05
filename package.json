@@ -1,0 +1,30 @@
+{
+  "name": "spiel",
+  "version": "1.1.0",
+  "description": "Listen to any article with a natural AI voice that runs 100% locally. Free, private, open-source text-to-speech for Chrome.",
+  "license": "MIT",
+  "author": "Harpreet Vishnoi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/preet01/spiel.git"
+  },
+  "scripts": {
+    "build:bg": "npx esbuild src/background.ts --bundle --outfile=dist/background.js --format=esm --platform=browser --target=chrome120",
+    "build:content": "npx esbuild src/content.ts --bundle --outfile=dist/content.js --format=iife --platform=browser --target=chrome120",
+    "build:offscreen": "npx esbuild src/offscreen.ts --bundle --outfile=dist/offscreen.js --format=esm --platform=browser --target=chrome120",
+    "build:scripts": "npm run build:bg && npm run build:content && npm run build:offscreen",
+    "icons": "python3 scripts/generate-icons.py",
+    "copy:popup": "cp -r popup dist/",
+    "copy:manifest": "cp manifest.json dist/manifest.json",
+    "build": "npm run build:scripts && npm run icons && npm run copy:popup && npm run copy:manifest",
+    "dev": "npm run build && echo '\\nDone! Load the dist/ folder as an unpacked extension in Chrome.'",
+    "package": "npm run build && rm -f spiel-extension.zip && cd dist && zip -rq ../spiel-extension.zip . -x '.DS_Store' '*/.DS_Store' && cd .. && echo 'Created spiel-extension.zip'"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "esbuild": "^0.24.0"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0"
+  }
+}
