@@ -89,6 +89,32 @@
 - **Fix:** don't touch the currently-playing sentence — apply the new speed from the **next** sentence and prefetch upcoming sentences at the new speed in the background. Current audio + highlight keep running; the change is audible within a sentence and Next stays instant.
 - **Rule:** never stop good playback to apply something that can take effect at the next natural boundary; push expensive regeneration to the background, off the click path. (Related: [[E4]] — keep the highlight tied to real playback events.)
 
+### E6 — Rapid pause/resume spam could wedge playback (stale resume)
+- **Symptom:** clicking pause/resume quickly could leave audio playing while the UI said "paused" — and the Pause button then did nothing (state already 'paused'), wedging playback until Resume→Pause.
+- **Root cause:** RESUME's async path awaited `hasOffscreen()` and then sent `OFFSCREEN_RESUME` **without re-checking state** — a Pause that landed during the await was overridden by the stale resume. Check-then-act across an `await`.
+- **Mistake class:** **State checked before an await, acted on after.** Every `await` is a preemption point where the user may have changed the world.
+- **Fix:** re-verify `state.status === 'playing'` after the await, bail with a log if superseded.
+- **Rule:** after ANY `await` in a user-interaction path, re-validate the state you're about to act on (generation counter or status check) before doing anything externally visible.
+
+### Found-safe in the same review (patterns worth keeping)
+- `queueTts` cannot wedge: `.then(job, job)` + tail `.catch` — a rejected job never breaks the chain.
+- `audioCache` is LRU-capped (20 clips) — no unbounded memory growth on long articles.
+- Sentence splitter is bounded: 1 MB input → 24k sentences ≤350 chars in ~30 ms; empty/symbol/10k-char-token inputs all safe (stress-tested).
+- Tab close / navigation stops playback; SW-restart state persistence with offscreen-reclaim detection.
+- Hardening added: `fetchClip` 90s watchdog (hang → error card, never infinite silence); empty-selection guard (no panel flash).
+
+---
+
+## ✅ Software-quality checklist (cross-reference before every release)
+
+**Robustness under interaction spam** — every control (play/pause/next/prev/speed/jump/stop/close) must be safe to hammer 10× fast. Techniques in this codebase: generation counter, single-flight queue, post-await state re-checks, idempotent pause/resume guards.
+**Bounded everything** — inputs (sentence length caps), memory (LRU caches), time (fetch watchdogs). Anything unbounded is a future hang or OOM.
+**No infinite silent states** — every failure path must land in a visible state with a retry route (error card + Play), never a spinner/silence forever.
+**Lifecycle honesty** — assume the SW dies every 30s, the offscreen doc gets reclaimed, tabs close mid-play. Persist and restore; detect and re-acquire.
+**Fail at build, not at runtime** — typecheck gate (`npm run typecheck`, in `build`), dist-completeness gate (`verify:build`). A user should never be the first to discover a missing file.
+**Single source of truth for sync'd UI** — highlight/caption/progress restart only on real playback events (E4/E5), never on free-running timers.
+**Verify behavior, not builds** — after changes: reload extension, Clear all errors, exercise play/pause/next/speed/PDF flows.
+
 ---
 
 ## How to add a new entry

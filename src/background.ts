@@ -289,6 +289,11 @@ async function fetchClip(text: string, voice: string, speed: number): Promise<Cl
           model: 'kokoro', input: text, voice, speed,
           response_format: AUDIO_FORMAT, stream: false, return_timestamps: true,
         }),
+        // Watchdog, not a normal timeout: chunks generate in <1s (10-20s cold). We must not
+        // abort live requests (Kokoro crashes on mid-generation cancel — see queueTts note),
+        // but if the server truly wedges, 90s turns an infinite silent hang into the error
+        // card with a retry, which is strictly better.
+        signal: AbortSignal.timeout(90000),
       });
       if (!response.ok) throw new Error(`TTS HTTP ${response.status}`);
       const data = await response.json();
@@ -478,6 +483,16 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
   if (selectionText) {
     const sentences = splitIntoSentences(selectionText);
     log('Selection split into', sentences.length, 'sentences');
+    // A selection of pure symbols/whitespace splits to nothing — error out cleanly here
+    // instead of creating a panel that playNextSentence immediately tears down.
+    if (!sentences.length) {
+      if (myGen === generation) {
+        state.status = 'error';
+        state.errorMessage = 'Nothing readable in that selection.';
+        broadcastStatus();
+      }
+      return;
+    }
     // NO health-check gate here: /health can block ~3s while the single-worker server
     // is mid-generation, which made every selection feel stuck. If the server is truly
     // down, the first clip fetch fails fast and the error path diagnoses it.
@@ -679,7 +694,13 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
         state.status = 'playing';
         broadcastStatus();
         (async () => {
-          if (clipActive && await hasOffscreen()) {
+          const live = clipActive && await hasOffscreen();
+          // Re-check after the await: if the user hit Pause again while we looked up the
+          // offscreen doc, a stale OFFSCREEN_RESUME here would un-pause the audio while the
+          // UI says paused — and the Pause button then no-ops (state already 'paused'),
+          // wedging playback. Rapid pause/resume spam hit this reliably.
+          if ((state.status as PlaybackState['status']) !== 'playing') { log('RESUME superseded by pause — not resuming'); return; }
+          if (live) {
             // Resume the SUSPENDED clip mid-sentence. Do NOT call playNextSentence (that restarts it).
             chrome.runtime.sendMessage({ type: 'OFFSCREEN_RESUME' }).catch(() => {});
             if (currentTabId) chrome.tabs.sendMessage(currentTabId, { type: 'RESUME_PANEL' }).catch(() => {});

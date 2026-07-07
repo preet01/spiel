@@ -1,6 +1,6 @@
 {
   "name": "spiel",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Listen to any article with a natural AI voice that runs 100% locally. Free, private, open-source text-to-speech for Chrome.",
   "license": "MIT",
   "author": "Harpreet Vishnoi",
@@ -19,14 +19,16 @@
     "copy:offscreen": "cp offscreen.html dist/offscreen.html",
     "copy:worker": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs dist/pdf.worker.min.mjs",
     "copy:manifest": "cp manifest.json dist/manifest.json",
+    "typecheck": "tsc --noEmit",
     "verify:build": "node scripts/verify-build.js",
-    "build": "npm run build:scripts && npm run icons && npm run copy:popup && npm run copy:offscreen && npm run copy:worker && npm run copy:manifest && npm run verify:build",
+    "build": "npm run typecheck && npm run build:scripts && npm run icons && npm run copy:popup && npm run copy:offscreen && npm run copy:worker && npm run copy:manifest && npm run verify:build",
     "dev": "npm run build && echo '\\nDone! Load the dist/ folder as an unpacked extension in Chrome.'",
     "package": "npm run build && rm -f spiel-extension.zip && cd dist && zip -rq ../spiel-extension.zip . -x '.DS_Store' '*/.DS_Store' && cd .. && echo 'Created spiel-extension.zip'"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "typescript": "^6.0.3"
   },
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
