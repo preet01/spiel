@@ -792,44 +792,18 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
       if (message.speed != null) state.speed = message.speed;
       chrome.storage.sync.set({ voice: state.voice, speed: state.speed });
       if (changed) {
-        // Prefetched audio at the old voice/speed is now invalid.
+        // Old-speed / old-voice prefetches are now invalid.
         audioCache.clear();
-              if (state.status === 'playing' && state.article) {
-          // SEAMLESS apply: keep the old clip playing while the new-speed clip is
-          // fetched, then swap. Stopping first put ~0.5s of dead air on every change.
-          const idx = state.currentIndex;
-          const genAtStart = generation;
-          const article = state.article;
-          const mySwap = ++swapSeq; // rapid changes: only the LATEST swap may win
-          queueTts(() => {
-            if (mySwap !== swapSeq || generation !== genAtStart
-                || state.currentIndex !== idx || state.status !== 'playing') {
-              return Promise.resolve(null); // superseded while queued — never sent
-            }
-            return fetchClip(article.sentences[idx], state.voice, state.speed);
-          })
-            .then(async (clip) => {
-              if (!clip) return;
-              // Only swap if nothing moved on while we fetched.
-              if (mySwap !== swapSeq) return; // a newer settings change superseded this one
-              if (generation !== genAtStart || state.currentIndex !== idx || state.status !== 'playing') return;
-              generation++; // silence the old clip's AUDIO_ENDED
-              const myGen = generation;
-              await ensureOffscreen();
-              if (generation !== myGen) return;
-              clipActive = true;
-              if (currentTabId) {
-                chrome.tabs.sendMessage(currentTabId, {
-                  type: 'UPDATE_PANEL', sentence: article.sentences[idx],
-                  index: idx, total: article.sentences.length, timestamps: clip.timestamps, speed: state.speed,
-                }).catch(() => {});
-              }
-              chrome.runtime.sendMessage({ type: 'OFFSCREEN_PLAY', audioBase64: clip.audio, genId: myGen }).catch(() => {});
-              prefetch(idx + 1);
-              prefetch(idx + 2);
-              persistState();
-            })
-            .catch(() => { /* failed — old clip keeps playing at the old speed */ });
+        if (state.status === 'playing' && state.article) {
+          // Do NOT interrupt the sentence that's currently playing. The old "seamless swap"
+          // re-fetched and restarted the current sentence at the new speed — on the
+          // single-worker engine that meant a 3-4s silent gap and a dropped highlight
+          // (worse if the clip ended mid-fetch, whose AUDIO_ENDED then advanced and fetched
+          // again). Instead: let the current clip finish at its speed and apply the new speed
+          // from the NEXT sentence. Prefetch upcoming sentences NOW at the new speed so the
+          // change is audible almost immediately and Next stays instant.
+          prefetch(state.currentIndex + 1);
+          prefetch(state.currentIndex + 2);
         } else if (state.status === 'paused' && state.article) {
           // Invalidate the suspended clip so RESUME re-fetches at the new settings.
           generation++;

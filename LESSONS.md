@@ -82,6 +82,13 @@
 - **Fix:** send `HIGHLIGHT_STOP` to the content script the instant the user skips/jumps (alongside `OFFSCREEN_STOP`), freezing the highlight until the next clip's `AUDIO_STARTED` restarts it in lockstep.
 - **Rule:** any progress/animation that mirrors playback must be **stopped on the same event that stops playback**, and only restarted by the signal that playback actually resumed — never left to free-run.
 
+### E5 — Speed change caused 3–4s of silence + the highlight vanished
+- **Symptom:** changing playback speed (e.g. 3× → 1×) produced 3–4 seconds of no audio, and the word highlight disappeared until sound came back.
+- **Root cause:** `UPDATE_SETTINGS` ran a "seamless swap" — it cleared the audio cache and **re-fetched + restarted the current sentence** at the new speed. On the single-worker Kokoro engine that regeneration takes seconds; worse, if the current clip finished mid-fetch, its `AUDIO_ENDED` advanced and kicked off *another* fetch (two serialized fetches). The highlight stopped the moment the old clip was superseded and only restarted once audio returned.
+- **Mistake class:** **Interrupting in-flight playback to apply a deferrable change.** Synchronous media regeneration on a single-worker backend sits directly on the interaction path.
+- **Fix:** don't touch the currently-playing sentence — apply the new speed from the **next** sentence and prefetch upcoming sentences at the new speed in the background. Current audio + highlight keep running; the change is audible within a sentence and Next stays instant.
+- **Rule:** never stop good playback to apply something that can take effect at the next natural boundary; push expensive regeneration to the background, off the click path. (Related: [[E4]] — keep the highlight tied to real playback events.)
+
 ---
 
 ## How to add a new entry
