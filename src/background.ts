@@ -175,6 +175,43 @@ async function ensureContentScript(tabId: number): Promise<void> {
   }
 }
 
+// ── PDF extraction ────────────────────────────────────────────────────────────
+//
+// Chrome's PDF viewer renders inside a plugin the DOM can't read. We inject the
+// pdf.js-powered extractor (only PDF tabs pay the ~1 MB cost), which fetches the
+// PDF's own bytes same-origin and parses the text locally — nothing leaves the Mac.
+// Returns { title, sentences, totalWords } or { error: <code> } for a friendly message.
+async function extractPdfFromTab(tabId: number, url: string): Promise<any> {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['pdf-content.js'] });
+  } catch (e) {
+    // file:// injection fails when "Allow access to file URLs" is off; also fails on
+    // sandboxed viewers we can't script.
+    err('PDF extractor injection failed:', e);
+    return { error: url.startsWith('file://') ? 'pdf-fileaccess' : 'pdf-inject' };
+  }
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_PDF' });
+    return res ?? { error: 'pdf-parse' };
+  } catch (e) {
+    err('PDF extraction message failed:', e);
+    return { error: 'pdf-parse' };
+  }
+}
+
+function pdfErrorMessage(code: string, _url: string): string {
+  switch (code) {
+    case 'pdf-fileaccess':
+      return 'To read PDFs on your Mac, enable "Allow access to file URLs" for Spiel at chrome://extensions, then press Play again.';
+    case 'pdf-empty':
+      return 'This looks like a scanned PDF with no selectable text — there’s nothing to read aloud.';
+    case 'pdf-inject':
+      return 'Chrome won’t let extensions read this PDF viewer. Try downloading the PDF and opening the file directly.';
+    default:
+      return 'Could not read this PDF. It may be password-protected or corrupted.';
+  }
+}
+
 // ── Server health + warm-up ───────────────────────────────────────────────────
 
 let consecutiveFailures = 0;
@@ -439,47 +476,57 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
     // down, the first clip fetch fails fast and the error path diagnoses it.
     articleData = { title: 'Selection', sentences, totalWords: selectionText.split(/\s+/).length, isSelection: true };
   } else {
+    // PDFs by URL: Chrome's viewer hides the text from the DOM, so extract from bytes.
     if (tab.url?.toLowerCase().endsWith('.pdf')) {
-      if (myGen === generation) {
+      articleData = await extractPdfFromTab(currentTabId, tab.url);
+      if (myGen !== generation) return;
+      if (articleData?.error) {
         state.status = 'error';
-        state.errorMessage = 'PDFs cannot be read yet. (PDF support is coming.)';
+        state.errorMessage = pdfErrorMessage(articleData.error, tab.url);
         broadcastStatus();
+        return;
       }
-      return;
     }
-    try {
-      await ensureContentScript(currentTabId);
-    } catch (e) {
-      err('Cannot inject content script:', e);
-      if (myGen === generation) {
+
+    if (!articleData) {
+      try {
+        await ensureContentScript(currentTabId);
+      } catch (e) {
+        err('Cannot inject content script:', e);
+        if (myGen === generation) {
+          state.status = 'error';
+          state.errorMessage = 'Cannot access this page. Chrome system pages cannot be read.';
+          broadcastStatus();
+        }
+        return;
+      }
+
+      let articleError: string | null = null;
+      checkServer(true); // fire-and-forget: keeps the popup status light honest, never gates playback
+      articleData = await chrome.tabs.sendMessage(currentTabId, { type: 'GET_ARTICLE' }).catch((e) => {
+        err('GET_ARTICLE failed:', e);
+        articleError = 'Could not read this page. Try reloading it.';
+        return null;
+      });
+
+      if (myGen !== generation) return; // user started something else meanwhile
+
+      if (articleData?.error === 'pdf') {
+        // A PDF served without a .pdf URL (detected in-page). Extract from bytes.
+        articleData = await extractPdfFromTab(currentTabId, tab.url || '');
+        if (myGen !== generation) return;
+        if (articleData?.error) {
+          state.status = 'error';
+          state.errorMessage = pdfErrorMessage(articleData.error, tab.url || '');
+          broadcastStatus();
+          return;
+        }
+      } else if (articleError || !articleData?.sentences?.length) {
         state.status = 'error';
-        state.errorMessage = 'Cannot access this page. Chrome system pages cannot be read.';
+        state.errorMessage = articleError || 'No readable text found on this page.';
         broadcastStatus();
+        return;
       }
-      return;
-    }
-
-    let articleError: string | null = null;
-    checkServer(true); // fire-and-forget: keeps the popup status light honest, never gates playback
-    articleData = await chrome.tabs.sendMessage(currentTabId, { type: 'GET_ARTICLE' }).catch((e) => {
-      err('GET_ARTICLE failed:', e);
-      articleError = 'Could not read this page. Try reloading it.';
-      return null;
-    });
-
-    if (myGen !== generation) return; // user started something else meanwhile
-
-    if (articleData?.error === 'pdf') {
-      state.status = 'error';
-      state.errorMessage = 'PDFs cannot be read yet. (PDF support is coming.)';
-      broadcastStatus();
-      return;
-    }
-    if (articleError || !articleData?.sentences?.length) {
-      state.status = 'error';
-      state.errorMessage = articleError || 'No readable text found on this page.';
-      broadcastStatus();
-      return;
     }
     log('Article:', articleData?.title, `${articleData?.sentences?.length} sentences`, `(extraction+health ${Date.now() - t0}ms)`);
   }

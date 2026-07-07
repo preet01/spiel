@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spiel Audio</title>
+</head>
+<body>
+  <!-- Invisible offscreen document. Its only job is to run offscreen.js, which
+       plays TTS audio via the Web Audio API (extension pages are exempt from
+       Chrome's autoplay policy). Loaded as a module because build:offscreen
+       bundles with --format=esm. -->
+  <script type="module" src="offscreen.js"></script>
+</body>
+</html>

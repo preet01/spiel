@@ -4,7 +4,13 @@
   "version": "1.1.0",
   "description": "Listen to any article, blog post, or selection. Local AI voice — private, free, no cloud, no subscription.",
   "permissions": ["activeTab", "scripting", "storage", "alarms", "offscreen"],
-  "host_permissions": ["http://127.0.0.1:8880/*", "http://localhost:8880/*"],
+  "host_permissions": ["http://127.0.0.1:8880/*", "http://localhost:8880/*", "file:///*"],
+  "web_accessible_resources": [
+    {
+      "resources": ["pdf.worker.min.mjs"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"]
+    }
+  ],
   "action": {
     "default_popup": "popup/index.html",
     "default_icon": {

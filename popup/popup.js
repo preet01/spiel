@@ -130,6 +130,13 @@ function applyState(state) {
   const { status, article, currentIndex, errorMessage } = state;
   lastStatus = status;
 
+  // Reading has begun → the floating in-page player is now the single Spiel UI. Close the
+  // popup. Errors and first-run setup deliberately do NOT close, so their message stays put.
+  if (closeOnPlayback && (status === 'loading' || status === 'playing')) {
+    window.close();
+    return;
+  }
+
   // First-run onboarding: no engine + nothing playing → show the setup card
   // instead of the idle/error cards. Playback states keep their own cards —
   // /health can briefly fail mid-generation and must not hijack the UI.
@@ -207,8 +214,16 @@ skipUrls.addEventListener('change',     () => chrome.storage.sync.set({ skipUrls
 skipBrackets.addEventListener('change', () => chrome.storage.sync.set({ skipBrackets: skipBrackets.checked }));
 skipParens.addEventListener('change',   () => chrome.storage.sync.set({ skipParens: skipParens.checked }));
 
+// When the user starts a read, the in-page floating player becomes the live UI — so we
+// close this popup to avoid two competing Spiel UIs. We close only once reading actually
+// begins (see applyState); if it errors or needs setup, the popup stays open to show why.
+let closeOnPlayback = false;
 btnPlay.addEventListener('click', () => {
+  closeOnPlayback = true;
   chrome.runtime.sendMessage({ type: 'PLAY', voice: voiceSelect.value, speed: curSpeed });
+  // Poll sooner than the 600ms tick so the popup snaps shut promptly when reading starts.
+  setTimeout(pollStatus, 150);
+  setTimeout(pollStatus, 400);
 });
 
 btnPause.addEventListener('click', () => {

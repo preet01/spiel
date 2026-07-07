@@ -34,6 +34,11 @@ let pauseStart = 0;
 let wordActive = false;
 let curDur = 0;                    // actual clip duration (s) — timestamps can undercount
 
+// Panel caption karaoke — word spans shown INSIDE the floating player. This works even when
+// the page has no highlightable DOM (PDFs), so PDF reading still gets a follow-along.
+let panelWords: HTMLElement[] = [];
+let panelActiveWord = -1;
+
 // ── Article extraction ─────────────────────────────────────────────────────────
 
 // Site-specific content roots for journals where Readability is unreliable.
@@ -374,6 +379,23 @@ function highlightRunIndex(di: number) {
   } catch { /* node may have changed; ignore */ }
 }
 
+// Highlight the di-th word of the current sentence INSIDE the floating panel caption.
+// Independent of page DOM, so it drives the follow-along for PDFs.
+function highlightPanelWord(di: number) {
+  if (!panelWords.length) return;
+  const idx = Math.max(0, Math.min(panelWords.length - 1, di));
+  if (idx === panelActiveWord) return;
+  if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
+  const el = panelWords[idx];
+  el.classList.add('active');
+  panelActiveWord = idx;
+  // Keep the active word visible within the caption box only — never scroll the host page.
+  const cap = panelShadow?.getElementById('spiel-caption') as HTMLElement | null;
+  if (cap && cap.scrollHeight > cap.clientHeight) {
+    cap.scrollTo({ top: el.offsetTop - cap.clientHeight / 2 + el.offsetHeight / 2, behavior: 'smooth' });
+  }
+}
+
 // Counts usually match 1:1, but Kokoro expands numbers/abbreviations in its timestamps
 // ("$3.5" → "three point five dollars"). When they differ, map proportionally so the
 // word highlight stays monotonic and in the right region instead of drifting.
@@ -407,13 +429,24 @@ function wordTick() {
   }
   if (di >= 0) highlightRunIndex(di);
 
+  // Panel caption karaoke — mapped by fraction of the sentence, independent of page words
+  // (so PDFs get a follow-along highlight even with no page DOM to paint).
+  const pn = panelWords.length;
+  if (pn > 0) {
+    let frac = 0;
+    if (curTs.length > 1 && i >= 0) frac = i / (curTs.length - 1);
+    if (curDur > 0) frac = Math.max(frac, Math.min(1, elapsed / curDur));
+    highlightPanelWord(Math.round(Math.min(1, Math.max(0, frac)) * (pn - 1)));
+  }
+
   const endT = Math.max(lastTsEnd, curDur);
   if (endT > 0 && elapsed > endT + 0.2) { wordActive = false; return; }
   wordRaf = requestAnimationFrame(wordTick);
 }
 
 function startWordClock(durationS?: number) {
-  if (!curTs.length || !curRunIndices.length) return;
+  // Run if we can drive EITHER the page highlight (articles) or the panel caption (PDFs).
+  if (!curTs.length || (!curRunIndices.length && !panelWords.length)) return;
   stopWordClock();
   curDur = durationS && durationS > 0 ? durationS : 0;
   clockStart = performance.now();
@@ -449,6 +482,8 @@ function clearHighlight() {
   if (HL) { HL.delete('spiel-reading'); HL.delete('spiel-word'); }
   curRunIndices = [];
   curTs = [];
+  if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
+  panelActiveWord = -1;
 }
 
 // ── Panel CSS ──────────────────────────────────────────────────────────────────
@@ -497,6 +532,27 @@ const PANEL_CSS = `
 
 .progress { height: 2px; background: var(--surface2); }
 .progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease; }
+
+/* Reading caption — the current sentence, with the spoken word highlighted (karaoke).
+   Works for articles AND PDFs, and is the follow-along view when the page can't be scrolled. */
+.caption {
+  padding: 13px 15px 4px;
+  max-height: 96px;
+  overflow-y: auto;
+  font-size: 14.5px;
+  line-height: 1.58;
+  letter-spacing: 0.005em;
+  color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface2) transparent;
+}
+.caption:empty { display: none; }
+.caption .w {
+  border-radius: 4px;
+  padding: 0 1.5px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.caption .w.active { background: var(--accent); color: #fff; }
 
 .row {
   display: flex;
@@ -770,6 +826,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   panel.title = isSelection ? 'Spiel — reading selection' : `Spiel — ${title}`;
   panel.innerHTML = `
     <div class="progress"><div class="progress-fill" id="spiel-progress"></div></div>
+    <div class="caption" id="spiel-caption"></div>
     <div class="row">
       <button class="icon-btn" id="spiel-prev" title="Previous sentence">
         <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
@@ -918,7 +975,26 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   log('Panel created');
 }
 
-function updatePanel(sentence: string, index: number, total: number): void {
+// Render the current sentence into the caption as individual word spans we can highlight.
+function renderPanelSentence(sentence: string): void {
+  const cap = panelShadow?.getElementById('spiel-caption') as HTMLElement | null;
+  panelWords = [];
+  panelActiveWord = -1;
+  if (!cap) return;
+  cap.textContent = '';
+  for (const part of (sentence || '').split(/(\s+)/)) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) { cap.appendChild(document.createTextNode(' ')); continue; }
+    const span = document.createElement('span');
+    span.className = 'w';
+    span.textContent = part;
+    cap.appendChild(span);
+    panelWords.push(span);
+  }
+  cap.scrollTop = 0;
+}
+
+function updatePanel(sentence: string, index: number, total: number, timestamps?: WordTs[]): void {
   if (!panelShadow) return;
   const fill = panelShadow.getElementById('spiel-progress') as HTMLElement;
   const lbl  = panelShadow.getElementById('spiel-progress-label');
@@ -929,6 +1005,11 @@ function updatePanel(sentence: string, index: number, total: number): void {
   if (tl)   tl.textContent   = timeLeftLabel(index);
   if (pp)   { pp.innerHTML = PAUSE_ICON; (pp as HTMLElement).title = 'Pause'; }
   isPaused = false;
+
+  // Show the sentence + seed timing so the caption karaoke runs even without page words
+  // (PDFs). For articles, highlightSentenceInPage re-sets curTs to the same value — safe.
+  renderPanelSentence(sentence);
+  curTs = (timestamps || []).filter(t => normWord(t.word));
 }
 
 function setPanelPaused(paused: boolean): void {
@@ -947,6 +1028,8 @@ function removePanel(): void {
   clearHighlight();
   words = [];
   wordsBuilt = false;
+  panelWords = [];
+  panelActiveWord = -1;
   isSelectionMode = false;
   setArticleSentences([]);
 }
@@ -1032,7 +1115,7 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
         });
       }
     }
-    updatePanel(message.sentence, message.index, message.total);
+    updatePanel(message.sentence, message.index, message.total, message.timestamps);
     if (!isSelectionMode && wordsBuilt) highlightSentenceInPage(message.sentence, message.timestamps);
     sendResponse({ ok: true });
     return false;
