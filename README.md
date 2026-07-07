@@ -1,15 +1,39 @@
-# 🎙 Spiel
+<div align="center">
 
-**Listen to any article with a natural AI voice — free, private, and open source.**
+<img src="assets/icon.svg" width="96" alt="Spiel icon — coral waveform">
 
-Spiel is a Chrome extension that reads web pages aloud with a high-quality neural voice ([Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)) running **entirely on your own Mac**. No cloud, no account, no subscription. Turn off Wi-Fi and it still works.
+# Spiel
 
-An open-source alternative to Speechify* — without the $139/year and without your reading history flowing through someone else's servers.
+**Listen to any article or PDF with a natural AI voice — free, private, and 100% local.**
+
+[![Release](https://img.shields.io/github/v/release/preet01/spiel?color=FF385C&label=release)](https://github.com/preet01/spiel/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-FF385C.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-1a1719.svg)](#install-2-steps-3-minutes)
+[![Website](https://img.shields.io/badge/website-preet01.github.io%2Fspiel-FF385C.svg)](https://preet01.github.io/spiel/)
+
+An open-source alternative to Speechify\* — without the $139/year, and without your
+reading history flowing through someone else's servers.
+
+**[Website](https://preet01.github.io/spiel/) · [Download](https://github.com/preet01/spiel/releases/latest) · [Report a bug](https://github.com/preet01/spiel/issues)**
+
+</div>
+
+---
+
+## Why Spiel
+
+Read-aloud tools are either expensive subscriptions or cloud services that see
+everything you read. Spiel is neither: the neural voice
+([Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)) runs **on your own Mac** at
+`127.0.0.1`. No account, no telemetry, no cloud. Turn off Wi-Fi and it still works.
+
+Built for students, researchers, and anyone who reads a lot and wants to pay nothing.
 
 ## Features
 
-- ▶️ **One click to listen** — open any article, press Play
-- 🖍 **Word-by-word highlighting** that follows the voice
+- ▶️ **One click to listen** — open any article or PDF, press Play
+- 🖍 **Word-by-word highlighting** that follows the voice, with auto-scroll
+- 📄 **Reads PDFs** — research papers, web-hosted or local, extracted on-device with pdf.js
 - 👆 **Click anywhere to listen from there** — click a paragraph, reading jumps to it
 - ✂️ **Read your selection** — select text on any page for instant playback
 - 🎚 **4 curated voices** (American/British, male/female) and speed up to 3×
@@ -20,18 +44,32 @@ An open-source alternative to Speechify* — without the $139/year and without y
 
 ## Install (2 steps, ~3 minutes)
 
-**Requirements:** Mac with Apple Silicon (M1 or newer), ~8 GB free disk, Chrome. (Intel Macs and Windows/Linux: on the roadmap.)
+**Requirements:** Mac with Apple Silicon (M1 or newer) · ~8 GB free disk · Chrome.
+*(Intel Macs and Windows/Linux: [on the roadmap](#roadmap).)*
 
 ### Step 1 — The extension
 
-*Until the Chrome Web Store listing is live:*
+**[⬇ Download the latest spiel-extension.zip](https://github.com/preet01/spiel/releases/latest)**, unzip it, then:
+
+1. Open `chrome://extensions`
+2. Toggle **Developer mode** ON (top-right)
+3. Click **Load unpacked** and pick the unzipped folder
+4. Pin the 🎙 Spiel icon to your toolbar
+
+> Keep the folder somewhere permanent (not Downloads) — Chrome loads the extension
+> from that exact path. *(A one-click Chrome Web Store install is coming.)*
+
+<details>
+<summary><strong>Or build from source</strong></summary>
 
 ```bash
 git clone https://github.com/preet01/spiel.git
 cd spiel && npm install && npm run build
 ```
 
-Then open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and pick the `dist/` folder.
+Then Load unpacked → pick the `dist/` folder.
+
+</details>
 
 ### Step 2 — The voice engine
 
@@ -41,7 +79,8 @@ Paste this in the **Terminal** app and press Enter:
 curl -fsSL https://raw.githubusercontent.com/preet01/spiel/main/install.sh | bash
 ```
 
-Wait ~2 minutes. When your Mac says **"Spiel is ready"** out loud, you're done — open any article and press Play in the Spiel popup.
+Wait ~2 minutes. When your Mac says **"Spiel is ready"** out loud, you're done —
+open any article and press Play in the Spiel popup.
 
 <details>
 <summary><strong>What does that command install, exactly?</strong></summary>
@@ -66,14 +105,17 @@ It's ~300 lines of plain bash — [read it yourself](install.sh) before running,
 │                                                              │
 │  Chrome                            Kokoro voice engine       │
 │  ┌──────────────────┐   text   ┌───────────────────────┐     │
-│  │ Spiel extension  │ ───────▶ │ FastAPI + Kokoro-82M   │    │
-│  │ (UI, highlights) │ ◀─────── │ at 127.0.0.1:8880      │    │
+│  │ Spiel extension  │ ───────▶ │ FastAPI + Kokoro-82M  │     │
+│  │ (UI, highlights) │ ◀─────── │ at 127.0.0.1:8880     │     │
 │  └──────────────────┘   audio  └───────────────────────┘     │
 │                                                              │
 └────────────── nothing crosses this line ─────────────────────┘
 ```
 
-The extension extracts the article ([Readability](https://github.com/mozilla/readability)), sends it sentence-by-sentence to the local engine, and plays the audio with synchronized word highlighting (via Kokoro's word timestamps).
+The extension extracts the article ([Readability](https://github.com/mozilla/readability))
+or PDF ([pdf.js](https://mozilla.github.io/pdf.js/), on-device), sends it
+sentence-by-sentence to the local engine, and plays the audio with synchronized
+word highlighting driven by Kokoro's word timestamps.
 
 ## Privacy
 
@@ -87,29 +129,44 @@ The extension extracts the article ([Readability](https://github.com/mozilla/rea
 |---|---|
 | Popup says "Voice not installed" | Run the Step 2 command; the popup updates itself when the engine is up |
 | Installed but silent | Engine log: `~/Library/Logs/spiel-voice-engine.log` · installer log: `~/.spiel/install.log` |
+| Local PDF won't read | Enable **Allow access to file URLs** for Spiel at `chrome://extensions` |
 | Port 8880 already in use | Another app owns it — `lsof -iTCP:8880 -sTCP:LISTEN` to find it |
 | First play of the day is slow | The model warms up on first request (~5–15 s); Spiel keeps it warm afterwards |
 | Uninstall everything | `curl -fsSL https://raw.githubusercontent.com/preet01/spiel/main/uninstall.sh \| bash` + remove the extension at `chrome://extensions` |
 
-## Building from source
+## Contributing
+
+Issues and PRs welcome — especially **Intel Mac / Windows / Linux ports**, new
+voices, and Firefox support. The codebase is small and documented:
+
+| File | What it does |
+|---|---|
+| `src/background.ts` | Playback state machine, TTS fetches, prefetch cache |
+| `src/content.ts` | Article extraction, word highlighting, floating player |
+| `src/offscreen.ts` | Audio playback (Web Audio, autoplay-exempt) |
+| `src/pdf-content.ts` | On-device PDF text extraction (pdf.js) |
+
+The build has two quality gates: a strict TypeScript check and a dist-completeness
+check that fails if any runtime file is missing. Before contributing, read
+[`LESSONS.md`](LESSONS.md) — every past bug, its root cause, and the pre-flight
+checklist that keeps them from coming back.
 
 ```bash
-npm install
-npm run build      # bundles TS → dist/, generates icons, copies popup + manifest
-npx tsc --noEmit   # type-check
-npm run package    # dist → spiel-extension.zip (for the Chrome Web Store)
+npm run build      # typecheck → bundle → icons → verify dist/ completeness
+npm run package    # dist/ → spiel-extension.zip
 ```
 
 ## Roadmap
 
 - [ ] **True one-click:** run the voice inside Chrome via WebGPU (no Terminal step at all)
 - [ ] Chrome Web Store listing
+- [ ] In-PDF page highlighting (Spiel Reader view)
 - [ ] Windows & Linux installers
 - [ ] More voices and languages
 - [ ] Firefox support
 
 ## License & credits
 
-[MIT](LICENSE) © Harpreet Vishnoi. Built on excellent open-source work — see [THIRD_PARTY.md](THIRD_PARTY.md) for full credits (Kokoro model & Kokoro-FastAPI, Apache-2.0; Mozilla Readability, Apache-2.0; and the CC BY voice datasets behind Kokoro).
+[MIT](LICENSE) © Harpreet Vishnoi. Built on excellent open-source work — see [THIRD_PARTY.md](THIRD_PARTY.md) for full credits (Kokoro model & Kokoro-FastAPI, Apache-2.0; Mozilla Readability, Apache-2.0; pdf.js, Apache-2.0; and the CC BY voice datasets behind Kokoro).
 
 \* *Spiel is not affiliated with, endorsed by, or connected to Speechify Inc. in any way.*
