@@ -1143,6 +1143,18 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     return false;
   }
 
+  // Sent the instant the user skips/jumps: freeze the highlight so it can't run ahead of
+  // audio during the fetch gap. The next sentence's WORD_CLOCK_START restarts it in sync.
+  if (message.type === 'HIGHLIGHT_STOP') {
+    stopWordClock();
+    const HL = (CSS as any).highlights;
+    if (HL) HL.delete('spiel-word');
+    if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
+    panelActiveWord = -1;
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (message.type === 'PING') {
     sendResponse({ ok: true });
     return false;

@@ -435,6 +435,13 @@ function panelShowPlay(): void {
   if (currentTabId) chrome.tabs.sendMessage(currentTabId, { type: 'PAUSE_PANEL' }).catch(() => {});
 }
 
+// Freeze the content-script highlight immediately (used on skip/jump) so the free-running
+// word clock can't animate ahead of audio during the fetch gap. The next clip's
+// WORD_CLOCK_START restarts it in lockstep with actual playback.
+function stopHighlight(): void {
+  if (currentTabId) chrome.tabs.sendMessage(currentTabId, { type: 'HIGHLIGHT_STOP' }).catch(() => {});
+}
+
 // ── Start / Stop ──────────────────────────────────────────────────────────────
 
 async function startPlayback(voice: string, speed: number, selectionText?: string): Promise<void> {
@@ -703,6 +710,7 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
         state.currentIndex++;
         state.status = 'playing';
         chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
+        stopHighlight();           // freeze highlight until the new clip actually starts
         playNextSentence();
       }
       sendResponse({ ok: true });
@@ -718,6 +726,7 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
         state.currentIndex = idx;
         state.status = 'playing';
         chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
+        stopHighlight();
         playNextSentence();
       }
       sendResponse({ ok: true });
@@ -733,6 +742,7 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
         state.currentIndex--;
         state.status = 'playing';
         chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
+        stopHighlight();
         playNextSentence();
       }
       sendResponse({ ok: true });

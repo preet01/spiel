@@ -75,6 +75,13 @@
 - **Mistake class:** **Context-capability & permission assumptions.**
 - **Rule → Checklist #3, #4, #5.**
 
+### E4 — Highlight ran ahead of audio on rapid Next (desync)
+- **Symptom:** clicking Next several times fast → voice cut out but the word highlighter kept moving; sometimes the reverse (highlight froze, voice continued).
+- **Root cause:** the content-script word-highlight clock is a **free-running timer** (rAF + `performance.now()`), only reset when the *next* clip's audio starts (`WORD_CLOCK_START`, fired from `AUDIO_STARTED`). On skip, background stops audio instantly (`OFFSCREEN_STOP`) but the new clip needs a fetch — so during that gap the old timer kept animating with no audio. Rapid skips stacked the gaps. The new PDF caption karaoke made it more visible.
+- **Mistake class:** **Two clocks, one truth.** A UI animation timed independently of the media it represents will drift whenever the media is interrupted.
+- **Fix:** send `HIGHLIGHT_STOP` to the content script the instant the user skips/jumps (alongside `OFFSCREEN_STOP`), freezing the highlight until the next clip's `AUDIO_STARTED` restarts it in lockstep.
+- **Rule:** any progress/animation that mirrors playback must be **stopped on the same event that stops playback**, and only restarted by the signal that playback actually resumed — never left to free-run.
+
 ---
 
 ## How to add a new entry
