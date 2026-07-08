@@ -355,8 +355,11 @@ btnSummarize.addEventListener('click', async () => {
     // extraction. The two run in parallel.
     const needsDownload = avail !== 'available';
     sumUi(needsDownload ? 'Downloading on-device AI (one-time)…' : 'Reading the page…', { indeterminate: !needsDownload });
+    // outputLanguage is REQUIRED in newer Chrome (150+ rejects without it; supported:
+    // de/en/es/fr/ja). Spiel's voices are English, so the summary is always English.
     const summarizerPromise = Summarizer.create({
       type: 'tldr', format: 'plain-text', length: 'long',
+      outputLanguage: 'en',
       signal,
       monitor(m) {
         m.addEventListener('downloadprogress', (e) => {
@@ -389,7 +392,7 @@ btnSummarize.addEventListener('click', async () => {
 
       if (!(await fitsQuota(s, input))) {
         // Map-reduce: key-points per sentence-boundary chunk, then summarize the points.
-        const kp = await Summarizer.create({ type: 'key-points', format: 'plain-text', length: 'short', signal });
+        const kp = await Summarizer.create({ type: 'key-points', format: 'plain-text', length: 'short', outputLanguage: 'en', signal });
         try {
           let sentences = page.sentences;
           for (let round = 0; round < 2 && !(await fitsQuota(s, input)); round++) {
@@ -430,8 +433,10 @@ btnSummarize.addEventListener('click', async () => {
       || (name === 'NotAllowedError' ? 'On-device AI is blocked on this device (managed Chrome?).'
         : name === 'QuotaExceededError' ? 'This page is too large for the on-device summarizer.'
         : name === 'NotReadableError' ? 'The AI model download was interrupted — try again.'
+        : name === 'NotSupportedError' ? 'This page’s language isn’t supported by the on-device summarizer yet.'
         : 'Could not summarize this page. Try again.');
-    console.error('[Spiel:popup] summarize failed:', e);
+    // Log something greppable — a bare thrown object prints as [object Object].
+    console.error('[Spiel:popup] summarize failed:', e?.ui || `${name}: ${e?.message || ''}`, e);
     sumUi(ui, { error: true });
     summarizing = false;
     sumAbort = null;
