@@ -261,6 +261,55 @@ function sumReset(keepErrorMs = 0) {
   if (keepErrorMs > 0) setTimeout(hide, keepErrorMs); else hide();
 }
 
+// Extract the page's readable text directly from the popup: content script for
+// articles, pdf-content.js for PDFs. Mirrors background's extractArticleForTab but
+// with zero relay hops. Returns {ok, title, sentences, text} or {error}.
+async function popupExtractArticle(tab) {
+  const tabId = tab.id;
+  const url = (tab.url || '').toLowerCase();
+
+  const ensureCS = async () => {
+    try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; } catch {}
+    try { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); } catch { return false; }
+    for (let i = 0; i < 20; i++) {
+      try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; }
+      catch { await new Promise(r => setTimeout(r, 50)); }
+    }
+    return false;
+  };
+
+  const pdfExtract = async () => {
+    try { await chrome.scripting.executeScript({ target: { tabId }, files: ['pdf-content.js'] }); }
+    catch {
+      return { error: url.startsWith('file://')
+        ? 'To read local PDFs, enable "Allow access to file URLs" for Spiel at chrome://extensions, then retry.'
+        : 'Chrome won’t let Spiel read this PDF viewer. Try downloading the PDF and opening the file.' };
+    }
+    try {
+      const r = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_PDF' });
+      if (!r || r.error) {
+        return { error: r?.error === 'pdf-empty'
+          ? 'This looks like a scanned PDF with no selectable text.'
+          : 'Could not read this PDF. It may be protected or corrupted.' };
+      }
+      return r;
+    } catch { return { error: 'Could not read this PDF. Try reloading the tab.' }; }
+  };
+
+  let data;
+  if (url.endsWith('.pdf')) {
+    data = await pdfExtract();
+  } else {
+    if (!(await ensureCS())) return { error: 'Cannot access this page. Chrome system pages cannot be read.' };
+    data = await chrome.tabs.sendMessage(tabId, { type: 'GET_ARTICLE' }).catch(() => null);
+    if (data?.error === 'pdf') data = await pdfExtract(); // PDF served without a .pdf URL
+    if (!data) return { error: 'Could not read this page. Try reloading it.' };
+  }
+  if (data.error) return { error: typeof data.error === 'string' && data.error.length > 20 ? data.error : 'Could not read this page.' };
+  if (!data.sentences?.length) return { error: 'No readable text found on this page.' };
+  return { ok: true, title: data.title || tab.title || 'Article', sentences: data.sentences, text: data.sentences.join(' ') };
+}
+
 // Split sentence array into chunks of ≤ maxChars, breaking only at sentence boundaries.
 function chunkSentences(sentences, maxChars) {
   const chunks = [];
@@ -321,14 +370,15 @@ btnSummarize.addEventListener('click', async () => {
     // the real handling happens at the `await summarizerPromise` below.
     summarizerPromise.catch(() => {});
 
-    // Resolve the tab HERE: the popup's window context is unambiguous, while the
-    // background service worker's `currentWindow` can misresolve.
+    // Extract DIRECTLY from this popup — no background relay. The popup is a full
+    // extension page (same chrome.scripting/tabs access), and the old popup→background→
+    // content-script→back relay dropped its response in MV3 ("no response from the
+    // reader"). Point-to-point messaging has no relay to drop (E9).
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const page = await chrome.runtime.sendMessage({
-      type: 'GET_ARTICLE_TEXT', tabId: tab?.id, url: tab?.url || '', tabTitle: tab?.title,
-    });
+    if (!tab?.id) throw { ui: 'Could not find the active tab — click into the page once and retry.' };
+    const page = await popupExtractArticle(tab);
     if (signal.aborted) throw { name: 'AbortError' };
-    if (!page?.ok) throw { ui: page?.error || 'Could not read this page (no response from the reader).' };
+    if (!page?.ok) throw { ui: page?.error || 'Could not read this page. Try reloading it.' };
     if ((page.text?.split(/\s+/).length ?? 0) < 60) {
       throw { ui: 'Not enough text on this page to summarize.' };
     }

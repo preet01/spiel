@@ -677,39 +677,9 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
       sendResponse({ ok: true });
       return false;
 
-    case 'GET_ARTICLE_TEXT':
-      // Popup requests the page's text for on-device summarization (articles AND PDFs).
-      // The popup resolves the target tab itself (its window context is unambiguous);
-      // the background query is only a fallback. Every failure leg reports a distinct
-      // message so a user screenshot pinpoints the leg (learned from a vague
-      // "Could not read this page." that could have been any of four failures).
-      lastInteraction = Date.now();
-      (async () => {
-        try {
-          let tabId: number | undefined = message.tabId;
-          let url: string = message.url || '';
-          let tabTitle: string | undefined = message.tabTitle;
-          if (!tabId) {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            tabId = tab?.id;
-            url = tab?.url || '';
-            tabTitle = tab?.title;
-          }
-          if (!tabId) { sendResponse({ ok: false, error: 'Could not find the active tab — click into the page once and retry.' }); return; }
-          const ext = await extractArticleForTab(tabId, url);
-          if (!ext.ok) { sendResponse({ ok: false, error: ext.error }); return; }
-          sendResponse({
-            ok: true,
-            title: ext.data.title || tabTitle || 'Article',
-            sentences: ext.data.sentences,
-            text: ext.data.sentences.join(' '),
-          });
-        } catch (e: any) {
-          err('GET_ARTICLE_TEXT failed:', e);
-          sendResponse({ ok: false, error: `Could not read this page (${e?.message || 'unknown error'}). Try reloading it.` });
-        }
-      })();
-      return true; // async response
+    // NOTE: Summarize's extraction happens entirely in the popup (popupExtractArticle) —
+    // a background relay handler here kept dropping its async response after the nested
+    // tab-message hop (MV3 flakiness, E9). Don't reintroduce a relay for it.
 
     case 'PAUSE':
       lastInteraction = Date.now();

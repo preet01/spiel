@@ -121,6 +121,13 @@
 - **Double-click read-from-here silently ate the jump:** dblclick selects a word → the "respect active selections" guard rejected it. Intent detection must distinguish a selection the user *made* from one their gesture *side-effected* (`dblclick` handler bypasses the guard and clears its own selection).
 - **"Could not read this page" on Summarize was unactionable:** four failure legs shared one error string, and the tab was resolved in the SW (`currentWindow` can misresolve there). Tab now resolved in the popup and every failure leg has a distinct message. **Rule:** distinct failures get distinct user-visible strings — a screenshot should pinpoint the leg.
 
+### E9 — Summarize: "no response from the reader" (relayed response dropped)
+- **Symptom:** Summarize failed with the popup's no-response error even though extraction worked (Play on the same page succeeded).
+- **Root cause:** the popup asked the **background** for the page text; the background then messaged the **content script** and tried to `sendResponse` back over the original channel after that nested hop. In MV3, holding a `sendResponse` open across a nested `tabs.sendMessage` round-trip is a known-flaky pattern — the relayed response silently never arrived. (Simple async responses like GET_STATUS work; it's the *relay* that drops.)
+- **Mistake class:** **Relay across message channels.** Every extra hop is a place a response can die.
+- **Fix:** the popup extracts **directly** (`popupExtractArticle`): it's a full extension page with the same `chrome.tabs`/`chrome.scripting` access, so it pings/injects the content script and the PDF extractor itself. Zero relay. The background handler was removed so the pattern can't creep back.
+- **Rule:** prefer point-to-point messaging; never respond to channel A by first awaiting a round-trip on channel B. If a relay is truly needed, have the requester poll state instead of holding a response channel open.
+
 ---
 
 ## ✅ Software-quality checklist (cross-reference before every release)
