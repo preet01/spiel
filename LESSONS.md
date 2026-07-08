@@ -128,6 +128,12 @@
 - **Fix:** the popup extracts **directly** (`popupExtractArticle`): it's a full extension page with the same `chrome.tabs`/`chrome.scripting` access, so it pings/injects the content script and the PDF extractor itself. Zero relay. The background handler was removed so the pattern can't creep back.
 - **Rule:** prefer point-to-point messaging; never respond to channel A by first awaiting a round-trip on channel B. If a relay is truly needed, have the requester poll state instead of holding a response channel open.
 
+### E10 — Summarizer rejected: missing required `outputLanguage` (+ unreadable logs)
+- **Symptom:** Summarize failed; console showed `summarize failed: [object Object]` and a separate Chrome warning: *"No output language was specified in a Summarizer API request… specify a supported output language code: [de, en, es, fr, ja]"*.
+- **Root cause (2):** (a) Chrome 150 turned `outputLanguage` from optional into effectively required — the API contract tightened between versions; (b) our catch logged the raw thrown object, which prints as `[object Object]`, hiding the reason.
+- **Fix:** `outputLanguage: 'en'` on every `Summarizer.create()`; error logging prints `e.ui`/`name: message` before the raw object; `NotSupportedError` mapped to a human message.
+- **Rules:** (1) treat browser AI/platform APIs as moving targets — a console *warning* today is a *rejection* next release; set all attestation-type params explicitly. (2) Never `console.error(obj)` a thrown plain object — always log a string form first; diagnosis speed depends on it.
+
 ---
 
 ## ✅ Software-quality checklist (cross-reference before every release)
