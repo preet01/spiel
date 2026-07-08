@@ -116,6 +116,9 @@ function applyState(state) {
   cardSetup.classList.toggle('hidden', !needsSetup);
   btnPlay.disabled = needsSetup;
   btnSummarize.disabled = needsSetup; // summary playback needs the voice engine too
+  // Summarize stays available even while reading (cached summaries reopen instantly);
+  // hidden only during first-run setup and the brief loading state.
+  $('summarize-zone').classList.toggle('hidden', needsSetup || status === 'loading');
 
   // Card visibility
   cardIdle.classList.toggle('hidden', needsSetup || (status !== 'idle' && status !== 'done'));

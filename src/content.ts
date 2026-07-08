@@ -1175,6 +1175,8 @@ function removeSummaryModal(): void {
   summarySentSpans = []; summaryActiveSent = -1;
   // If the karaoke was pointed at modal spans, detach; the caption re-renders next sentence.
   panelWords = []; panelActiveWord = -1;
+  // If the player was docked beneath the modal, send it back to its home corner.
+  if (panelHost) panelHost.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;';
 }
 
 function createSummaryModal(title: string, summary: string): void {
@@ -1330,6 +1332,14 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       buildWordIndex();
       buildSentenceRuns();
     }
+    // Summary playback with the modal open: ONE consistent control surface — the
+    // floating player docks centered beneath the card and the modal's own Listen row
+    // hides (it would duplicate the player). Restored on stop/close.
+    if (isSelectionMode && summaryShadow && panelHost) {
+      panelHost.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:2147483647;';
+      const foot = summaryShadow.querySelector('.foot') as HTMLElement | null;
+      if (foot) foot.style.display = 'none';
+    }
     sendResponse({ ok: true });
     return false;
   }
@@ -1343,6 +1353,9 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
   if (message.type === 'HIDE_PLAYER') {
     removePanel();
     hideSelectionButton();
+    // Reading ended — bring the modal's Listen row back for a replay.
+    const foot = summaryShadow?.querySelector('.foot') as HTMLElement | null;
+    if (foot) foot.style.display = '';
     sendResponse({ ok: true });
     return false;
   }

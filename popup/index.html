@@ -78,6 +78,11 @@
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         Play This Page
       </button>
+    </div>
+
+    <!-- Summarize lives OUTSIDE the idle controls: it must stay available while
+         reading too (summaries are cached — re-opening one is instant). -->
+    <div class="controls" id="summarize-zone">
       <button class="btn btn-outline btn-full" id="btn-summarize" title="Summarize this page on-device and show it — press Listen there to hear it">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h7v2H4z"/></svg>
         Summarize This Page
