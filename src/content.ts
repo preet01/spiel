@@ -823,7 +823,8 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   const panel = document.createElement('div');
   panel.id = 'spiel-panel';
   panel.className = 'player';
-  panel.title = isSelection ? 'Spiel — reading selection' : `Spiel — ${title}`;
+  // Selection playback carries its own display title ("Selection" or "Summary").
+  panel.title = isSelection ? `Spiel — reading ${(title || 'selection').toLowerCase()}` : `Spiel — ${title}`;
   panel.innerHTML = `
     <div class="progress"><div class="progress-fill" id="spiel-progress"></div></div>
     <div class="caption" id="spiel-caption"></div>

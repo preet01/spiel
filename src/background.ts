@@ -449,10 +449,47 @@ function stopHighlight(): void {
 
 // ── Start / Stop ──────────────────────────────────────────────────────────────
 
-async function startPlayback(voice: string, speed: number, selectionText?: string): Promise<void> {
+// Shared extraction for a tab (articles AND PDFs) — used by playback and Summarize.
+// Pure: no state mutation, no generation checks; callers re-validate after the await.
+async function extractArticleForTab(tabId: number, url: string):
+    Promise<{ ok: true; data: any } | { ok: false; error: string }> {
+  // PDFs by URL: Chrome's viewer hides the text from the DOM, so extract from bytes.
+  if (url.toLowerCase().endsWith('.pdf')) {
+    const pdf = await extractPdfFromTab(tabId, url);
+    if (pdf?.error) return { ok: false, error: pdfErrorMessage(pdf.error, url) };
+    return { ok: true, data: pdf };
+  }
+
+  try {
+    await ensureContentScript(tabId);
+  } catch (e) {
+    err('Cannot inject content script:', e);
+    return { ok: false, error: 'Cannot access this page. Chrome system pages cannot be read.' };
+  }
+
+  checkServer(true); // fire-and-forget: keeps the popup status light honest, never gates anything
+  let failed = false;
+  const data = await chrome.tabs.sendMessage(tabId, { type: 'GET_ARTICLE' }).catch((e) => {
+    err('GET_ARTICLE failed:', e);
+    failed = true;
+    return null;
+  });
+  if (failed) return { ok: false, error: 'Could not read this page. Try reloading it.' };
+
+  if (data?.error === 'pdf') {
+    // A PDF served without a .pdf URL (detected in-page). Extract from bytes.
+    const pdf = await extractPdfFromTab(tabId, url);
+    if (pdf?.error) return { ok: false, error: pdfErrorMessage(pdf.error, url) };
+    return { ok: true, data: pdf };
+  }
+  if (!data?.sentences?.length) return { ok: false, error: 'No readable text found on this page.' };
+  return { ok: true, data };
+}
+
+async function startPlayback(voice: string, speed: number, selectionText?: string, selectionTitle?: string): Promise<void> {
   const t0 = Date.now();
   sessionStartT = t0;
-  log('startPlayback', { voice, speed, isSelection: !!selectionText });
+  log('startPlayback', { voice, speed, isSelection: !!selectionText, selectionTitle });
   ensureOffscreen(); // fire early, in parallel with extraction — it's needed before first audio
 
   // Tear down any previous session cleanly — including audio already sounding.
@@ -496,60 +533,17 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
     // NO health-check gate here: /health can block ~3s while the single-worker server
     // is mid-generation, which made every selection feel stuck. If the server is truly
     // down, the first clip fetch fails fast and the error path diagnoses it.
-    articleData = { title: 'Selection', sentences, totalWords: selectionText.split(/\s+/).length, isSelection: true };
+    articleData = { title: selectionTitle || 'Selection', sentences, totalWords: selectionText.split(/\s+/).length, isSelection: true };
   } else {
-    // PDFs by URL: Chrome's viewer hides the text from the DOM, so extract from bytes.
-    if (tab.url?.toLowerCase().endsWith('.pdf')) {
-      articleData = await extractPdfFromTab(currentTabId, tab.url);
-      if (myGen !== generation) return;
-      if (articleData?.error) {
-        state.status = 'error';
-        state.errorMessage = pdfErrorMessage(articleData.error, tab.url);
-        broadcastStatus();
-        return;
-      }
+    const ext = await extractArticleForTab(currentTabId, tab.url || '');
+    if (myGen !== generation) return; // user started something else meanwhile
+    if (!ext.ok) {
+      state.status = 'error';
+      state.errorMessage = ext.error;
+      broadcastStatus();
+      return;
     }
-
-    if (!articleData) {
-      try {
-        await ensureContentScript(currentTabId);
-      } catch (e) {
-        err('Cannot inject content script:', e);
-        if (myGen === generation) {
-          state.status = 'error';
-          state.errorMessage = 'Cannot access this page. Chrome system pages cannot be read.';
-          broadcastStatus();
-        }
-        return;
-      }
-
-      let articleError: string | null = null;
-      checkServer(true); // fire-and-forget: keeps the popup status light honest, never gates playback
-      articleData = await chrome.tabs.sendMessage(currentTabId, { type: 'GET_ARTICLE' }).catch((e) => {
-        err('GET_ARTICLE failed:', e);
-        articleError = 'Could not read this page. Try reloading it.';
-        return null;
-      });
-
-      if (myGen !== generation) return; // user started something else meanwhile
-
-      if (articleData?.error === 'pdf') {
-        // A PDF served without a .pdf URL (detected in-page). Extract from bytes.
-        articleData = await extractPdfFromTab(currentTabId, tab.url || '');
-        if (myGen !== generation) return;
-        if (articleData?.error) {
-          state.status = 'error';
-          state.errorMessage = pdfErrorMessage(articleData.error, tab.url || '');
-          broadcastStatus();
-          return;
-        }
-      } else if (articleError || !articleData?.sentences?.length) {
-        state.status = 'error';
-        state.errorMessage = articleError || 'No readable text found on this page.';
-        broadcastStatus();
-        return;
-      }
-    }
+    articleData = ext.data;
     log('Article:', articleData?.title, `${articleData?.sentences?.length} sentences`, `(extraction+health ${Date.now() - t0}ms)`);
   }
 
@@ -667,6 +661,36 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
       startPlayback(message.voice || state.voice, message.speed ?? state.speed, message.text);
       sendResponse({ ok: true });
       return false;
+
+    case 'PLAY_SUMMARY':
+      // Summary text produced on-device by the popup (Chrome built-in Summarizer).
+      // Plays through the selection path: floating player + caption karaoke, titled "Summary".
+      lastInteraction = Date.now();
+      startPlayback(message.voice || state.voice, message.speed ?? state.speed, message.text, 'Summary');
+      sendResponse({ ok: true });
+      return false;
+
+    case 'GET_ARTICLE_TEXT':
+      // Popup requests the page's text for on-device summarization (articles AND PDFs).
+      lastInteraction = Date.now();
+      (async () => {
+        try {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab?.id) { sendResponse({ ok: false, error: 'No active tab.' }); return; }
+          const ext = await extractArticleForTab(tab.id, tab.url || '');
+          if (!ext.ok) { sendResponse({ ok: false, error: ext.error }); return; }
+          sendResponse({
+            ok: true,
+            title: ext.data.title || tab.title || 'Article',
+            sentences: ext.data.sentences,
+            text: ext.data.sentences.join(' '),
+          });
+        } catch (e) {
+          err('GET_ARTICLE_TEXT failed:', e);
+          sendResponse({ ok: false, error: 'Could not read this page.' });
+        }
+      })();
+      return true; // async response
 
     case 'PAUSE':
       lastInteraction = Date.now();

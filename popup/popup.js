@@ -144,6 +144,7 @@ function applyState(state) {
     (status === 'idle' || status === 'done' || status === 'error');
   cardSetup.classList.toggle('hidden', !needsSetup);
   btnPlay.disabled = needsSetup;
+  btnSummarize.disabled = needsSetup; // summary playback needs the voice engine too
 
   // Card visibility
   cardIdle.classList.toggle('hidden', needsSetup || (status !== 'idle' && status !== 'done'));
@@ -224,6 +225,159 @@ btnPlay.addEventListener('click', () => {
   // Poll sooner than the 600ms tick so the popup snaps shut promptly when reading starts.
   setTimeout(pollStatus, 150);
   setTimeout(pollStatus, 400);
+});
+
+// ── Summarize & Listen (Chrome built-in AI — on-device Gemini Nano) ───────────
+// The Summarizer API only runs in real document contexts; this popup is the
+// recommended one (a popup click also provides the user activation required to
+// trigger the one-time model download). Text comes from the background's shared
+// extraction (articles AND PDFs); the finished summary plays through the normal
+// selection path with the floating player + caption karaoke.
+
+const btnSummarize = $('btn-summarize');
+const sumStatus    = $('sum-status');
+const sumBar       = $('sum-bar');
+const sumBarFill   = $('sum-bar-fill');
+const sumLabel     = $('sum-label');
+
+let summarizing = false;
+let sumAbort = null;
+
+const SUM_IDLE_HTML = btnSummarize.innerHTML;
+
+function sumUi(label, { progress = null, error = false, indeterminate = false } = {}) {
+  sumStatus.classList.remove('hidden');
+  sumStatus.classList.toggle('error', error);
+  sumBar.classList.toggle('indeterminate', indeterminate && progress == null);
+  if (progress != null) sumBarFill.style.width = `${Math.round(progress * 100)}%`;
+  sumLabel.textContent = label;
+}
+
+function sumReset(keepErrorMs = 0) {
+  summarizing = false;
+  sumAbort = null;
+  btnSummarize.innerHTML = SUM_IDLE_HTML;
+  const hide = () => { sumStatus.classList.add('hidden'); sumStatus.classList.remove('error'); sumBar.classList.remove('indeterminate'); sumBarFill.style.width = '0%'; };
+  if (keepErrorMs > 0) setTimeout(hide, keepErrorMs); else hide();
+}
+
+// Split sentence array into chunks of ≤ maxChars, breaking only at sentence boundaries.
+function chunkSentences(sentences, maxChars) {
+  const chunks = [];
+  let cur = '';
+  for (const s of sentences) {
+    if (cur && cur.length + s.length + 1 > maxChars) { chunks.push(cur); cur = s; }
+    else cur = cur ? `${cur} ${s}` : s;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+// Does `text` fit in this summarizer's input window? Uses the real token APIs when
+// present; falls back to a conservative char heuristic on builds without them.
+async function fitsQuota(s, text) {
+  try {
+    if (typeof s.measureInputUsage === 'function' && typeof s.inputQuota === 'number') {
+      return (await s.measureInputUsage(text)) <= s.inputQuota;
+    }
+  } catch { /* fall through to heuristic */ }
+  return text.length <= 12000; // ~3k tokens — safely inside Nano's window
+}
+
+btnSummarize.addEventListener('click', async () => {
+  // Second click while running = cancel (spam-safe: one in-flight run, ever).
+  if (summarizing) { sumAbort?.abort(); return; }
+  summarizing = true;
+  sumAbort = new AbortController();
+  const signal = sumAbort.signal;
+  btnSummarize.innerHTML = 'Cancel';
+
+  try {
+    if (!('Summarizer' in self)) {
+      throw { ui: 'Needs Chrome 138+ with built-in AI. Update Chrome and try again.' };
+    }
+    const avail = await Summarizer.availability();
+    if (!avail || avail === 'unavailable') {
+      throw { ui: 'On-device AI isn’t available here (needs macOS 13+, ~22 GB free disk).' };
+    }
+
+    // Start create() NOW, directly off the click — a first-time model download needs
+    // the user activation to still be transiently active, so it must not wait behind
+    // extraction. The two run in parallel.
+    const needsDownload = avail !== 'available';
+    sumUi(needsDownload ? 'Downloading on-device AI (one-time)…' : 'Reading the page…', { indeterminate: !needsDownload });
+    const summarizerPromise = Summarizer.create({
+      type: 'tldr', format: 'plain-text', length: 'long',
+      signal,
+      monitor(m) {
+        m.addEventListener('downloadprogress', (e) => {
+          sumUi(`Downloading on-device AI (one-time)… ${Math.round(e.loaded * 100)}%`, { progress: e.loaded });
+        });
+      },
+    });
+
+    const page = await chrome.runtime.sendMessage({ type: 'GET_ARTICLE_TEXT' });
+    if (signal.aborted) throw { name: 'AbortError' };
+    if (!page?.ok) throw { ui: page?.error || 'Could not read this page.' };
+    if ((page.text?.split(/\s+/).length ?? 0) < 60) {
+      throw { ui: 'Not enough text on this page to summarize.' };
+    }
+
+    const s = await summarizerPromise;
+    try {
+      let input = page.text;
+
+      if (!(await fitsQuota(s, input))) {
+        // Map-reduce: key-points per sentence-boundary chunk, then summarize the points.
+        const kp = await Summarizer.create({ type: 'key-points', format: 'plain-text', length: 'short', signal });
+        try {
+          let sentences = page.sentences;
+          for (let round = 0; round < 2 && !(await fitsQuota(s, input)); round++) {
+            const chunks = chunkSentences(sentences, 3000);
+            const points = [];
+            for (let i = 0; i < chunks.length; i++) {
+              if (signal.aborted) throw { name: 'AbortError' };
+              sumUi(`Summarizing… ${i + 1}/${chunks.length}`, { progress: (i + 1) / (chunks.length + 1) });
+              points.push(await kp.summarize(chunks[i]));
+            }
+            input = points.join('\n');
+            sentences = points; // if STILL over quota, round 2 key-points the points
+          }
+        } finally { kp.destroy?.(); }
+        // Backstop: hard-trim to fit rather than erroring on pathological documents.
+        while (!(await fitsQuota(s, input)) && input.length > 4000) {
+          input = input.slice(0, Math.floor(input.length * 0.7));
+        }
+      }
+
+      sumUi('Summarizing…', { indeterminate: true });
+      const summary = await s.summarize(input, { context: `A summary of "${page.title}", to be read aloud.` });
+      if (signal.aborted) throw { name: 'AbortError' };
+      if (!summary?.trim()) throw { ui: 'The summarizer returned nothing — try again.' };
+
+      // Hand off to playback: floating player takes over, popup closes when audio starts.
+      closeOnPlayback = true;
+      chrome.runtime.sendMessage({ type: 'PLAY_SUMMARY', text: summary.trim(), voice: voiceSelect.value, speed: curSpeed });
+      sumUi('Starting playback…', { progress: 1 });
+      setTimeout(pollStatus, 150);
+      setTimeout(pollStatus, 400);
+      setTimeout(() => sumReset(), 2500); // popup usually closes first; reset is a fallback
+    } finally { s.destroy?.(); }
+  } catch (e) {
+    if (e?.name === 'AbortError') { sumReset(); return; } // user cancelled — quiet reset
+    const name = e?.name || '';
+    const ui = e?.ui
+      || (name === 'NotAllowedError' ? 'On-device AI is blocked on this device (managed Chrome?).'
+        : name === 'QuotaExceededError' ? 'This page is too large for the on-device summarizer.'
+        : name === 'NotReadableError' ? 'The AI model download was interrupted — try again.'
+        : 'Could not summarize this page. Try again.');
+    console.error('[Spiel:popup] summarize failed:', e);
+    sumUi(ui, { error: true });
+    summarizing = false;
+    sumAbort = null;
+    btnSummarize.innerHTML = SUM_IDLE_HTML;
+    setTimeout(() => { if (!summarizing) sumReset(); }, 6000);
+  }
 });
 
 btnPause.addEventListener('click', () => {

@@ -355,6 +355,53 @@ html, body {
 
 .btn-ghost:hover { background: var(--track); }
 
+/* Secondary action: coral outline (Summarize & Listen) */
+.btn-outline {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.btn-outline:hover:not(:disabled) { background: var(--accent-glow); }
+
+/* Summarize progress row */
+.sum-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 0;
+}
+.sum-status.hidden { display: none; }
+.sum-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--track);
+  overflow: hidden;
+}
+.sum-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+/* Indeterminate shimmer while summarizing (no measurable progress) */
+.sum-bar.indeterminate .sum-bar-fill {
+  width: 35%;
+  animation: sum-slide 1.1s ease-in-out infinite;
+}
+@keyframes sum-slide {
+  0%   { margin-left: 0; }
+  50%  { margin-left: 65%; }
+  100% { margin-left: 0; }
+}
+.sum-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text3);
+}
+.sum-status.error .sum-label { color: var(--red); font-weight: 600; }
+.sum-status.error .sum-bar { visibility: hidden; }
+
 .btn-icon {
   background: var(--bg3);
   color: var(--text2);
