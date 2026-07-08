@@ -20,6 +20,7 @@
     "copy:worker": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs dist/pdf.worker.min.mjs",
     "copy:manifest": "cp manifest.json dist/manifest.json",
     "typecheck": "tsc --noEmit",
+    "e2e": "npm run build && node scripts/e2e-smoke.mjs",
     "verify:build": "node scripts/verify-build.js",
     "build": "npm run typecheck && npm run build:scripts && npm run icons && npm run copy:popup && npm run copy:offscreen && npm run copy:worker && npm run copy:manifest && npm run verify:build",
     "dev": "npm run build && echo '\\nDone! Load the dist/ folder as an unpacked extension in Chrome.'",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@types/chrome": "^0.0.270",
     "esbuild": "^0.24.0",
+    "playwright": "^1.61.1",
     "typescript": "^6.0.3"
   },
   "dependencies": {

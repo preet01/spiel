@@ -52,6 +52,13 @@ const SITE_SELECTORS: Array<[RegExp, string]> = [
   [/pubmed\.ncbi/, 'article, .abstract'],
 ];
 
+// After the extension reloads/updates, THIS copy of the content script is orphaned in
+// every open tab: its chrome.* APIs are dead and any use throws "Extension context
+// invalidated" (E11). Detect it and go quiet — the new content script takes over.
+function extensionAlive(): boolean {
+  try { return !!chrome.runtime?.id; } catch { return false; }
+}
+
 function cleanText(s: string): string {
   return s.replace(/\[[\d]+\]/g, '').replace(/\s+/g, ' ').trim();
 }
@@ -924,6 +931,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   // under the cursor, which used to trip the active-selection guard and silently
   // eat the jump — so dblclick bypasses that guard and clears its own selection.
   const jumpFromPoint = (e: MouseEvent, fromDblclick: boolean): void => {
+    if (!extensionAlive()) return; // orphaned after reload (E11)
     if (isSelectionMode || !wordsBuilt || !sentenceRuns.length) return;
     const tgt = e.target as HTMLElement;
     if (!tgt || tgt.closest?.('#spiel-panel-host, #spiel-sel-host')) return;
@@ -959,6 +967,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
 
   // ── Keyboard shortcuts (active only while the panel is open) ──
   document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!extensionAlive()) return; // orphaned after reload (E11)
     if (!panelHost) return;
     const tgt = e.target as HTMLElement;
     const editable = tgt && (tgt.isContentEditable ||
@@ -1068,6 +1077,8 @@ function removePanel(): void {
 
 document.addEventListener('mouseup', (e: MouseEvent) => {
   setTimeout(() => {
+    // Orphaned after an extension reload? Go quiet instead of throwing (E11).
+    if (!extensionAlive()) { try { panelHost?.remove(); selBtnHost?.remove(); } catch {} return; }
     // Don't pop up over editors / form fields / our own UI
     const tgt = e.target as HTMLElement;
     if (tgt && (tgt.isContentEditable || /^(input|textarea|select)$/i.test(tgt.tagName)

@@ -128,6 +128,12 @@
 - **Fix:** the popup extracts **directly** (`popupExtractArticle`): it's a full extension page with the same `chrome.tabs`/`chrome.scripting` access, so it pings/injects the content script and the PDF extractor itself. Zero relay. The background handler was removed so the pattern can't creep back.
 - **Rule:** prefer point-to-point messaging; never respond to channel A by first awaiting a round-trip on channel B. If a relay is truly needed, have the requester poll state instead of holding a response channel open.
 
+### E11 — "Extension context invalidated" spam from orphaned content scripts
+- **Symptom:** after every extension reload, tabs that were already open (any site) threw `Uncaught Error: Extension context invalidated` when the user selected text.
+- **Root cause:** reloading the extension orphans the OLD content script in every open tab — it keeps its DOM listeners but its `chrome.*` APIs are dead. Its mouseup handler then throws on first use.
+- **Fix:** `extensionAlive()` guard (`chrome.runtime?.id` in try/catch) at every document-level listener entry; orphans remove their UI and go quiet — the freshly injected script takes over.
+- **Rule:** a content script must assume it WILL be orphaned. Guard every entry point that touches `chrome.*`, and fail silent — the replacement script owns the tab now.
+
 ### E10 — Summarizer rejected: missing required `outputLanguage` (+ unreadable logs)
 - **Symptom:** Summarize failed; console showed `summarize failed: [object Object]` and a separate Chrome warning: *"No output language was specified in a Summarizer API request… specify a supported output language code: [de, en, es, fr, ja]"*.
 - **Root cause (2):** (a) Chrome 150 turned `outputLanguage` from optional into effectively required — the API contract tightened between versions; (b) our catch logged the raw thrown object, which prints as `[object Object]`, hiding the reason.
@@ -144,7 +150,7 @@
 **Lifecycle honesty** — assume the SW dies every 30s, the offscreen doc gets reclaimed, tabs close mid-play. Persist and restore; detect and re-acquire.
 **Fail at build, not at runtime** — typecheck gate (`npm run typecheck`, in `build`), dist-completeness gate (`verify:build`). A user should never be the first to discover a missing file.
 **Single source of truth for sync'd UI** — highlight/caption/progress restart only on real playback events (E4/E5), never on free-running timers.
-**Verify behavior, not builds** — after changes: reload extension, Clear all errors, exercise play/pause/next/speed/PDF flows.
+**Verify behavior, not builds** — after changes: run `npm run e2e` (automated Chrome loads dist/, verifies content script, extraction, the full audio pipeline vs the live engine, and zero uncaught errors — no human needed). Then reload the real extension, Clear all errors, spot-check flows the harness can't reach (Nano summarize needs the real profile's model).
 
 ---
 
