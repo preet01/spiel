@@ -39,6 +39,14 @@ let curDur = 0;                    // actual clip duration (s) — timestamps ca
 let panelWords: HTMLElement[] = [];
 let panelActiveWord = -1;
 
+// Summary modal — a designed in-page overlay showing the on-device summary. Playback is
+// user-initiated (Listen button); while reading, the karaoke highlights the MODAL text.
+let summaryHost: HTMLElement | null = null;
+let summaryShadow: ShadowRoot | null = null;
+let summaryAbort: AbortController | null = null;
+let summarySentSpans: HTMLElement[][] = [];  // word spans per summary sentence
+let summaryActiveSent = -1;
+
 // ── Article extraction ─────────────────────────────────────────────────────────
 
 // Site-specific content roots for journals where Readability is unreliable.
@@ -344,20 +352,22 @@ function timeLeftLabel(fromIndex: number): string {
   return `~${Math.round(mins)} min`;
 }
 
-function highlightSentenceInPage(sentence: string, timestamps?: WordTs[]) {
+// Returns true when the sentence was located and highlighted in the page DOM —
+// the caller uses this to hide the redundant caption (page highlight is the stage).
+function highlightSentenceInPage(sentence: string, timestamps?: WordTs[]): boolean {
   stopWordClock();
   const HL = (CSS as any).highlights;
-  if (!HL || !words.length) return;
+  if (!HL || !words.length) return false;
   HL.delete('spiel-reading');
   HL.delete('spiel-word');
   curRunIndices = [];
   curTs = [];
 
   const target = sentence.split(/\s+/).map(normWord).filter(Boolean);
-  if (!target.length) return;
+  if (!target.length) return false;
 
   const match = findWordRun(target);
-  if (!match) { log('Highlight: no match for sentence'); return; }
+  if (!match) { log('Highlight: no match for sentence'); return false; }
 
   try {
     const a = words[match.start];
@@ -380,8 +390,10 @@ function highlightSentenceInPage(sentence: string, timestamps?: WordTs[]) {
     if (rect.height > 0 && (rect.top < 120 || rect.bottom > vh - 120)) {
       (a.node.parentElement as HTMLElement)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+    return true;
   } catch (e) {
     log('Highlight error:', e);
+    return false;
   }
 }
 
@@ -412,7 +424,9 @@ function highlightPanelWord(di: number) {
   const el = panelWords[idx];
   el.classList.add('active');
   panelActiveWord = idx;
-  // Keep the active word visible within the caption box only — never scroll the host page.
+  // Summary modal handles its own sentence-level scrolling; only the caption needs
+  // per-word scroll. Never scroll the host page from here.
+  if (summaryShadow && summaryActiveSent >= 0) return;
   const cap = panelShadow?.getElementById('spiel-caption') as HTMLElement | null;
   if (cap && cap.scrollHeight > cap.clientHeight) {
     cap.scrollTo({ top: el.offsetTop - cap.clientHeight / 2 + el.offsetHeight / 2, behavior: 'smooth' });
@@ -1033,7 +1047,7 @@ function renderPanelSentence(sentence: string): void {
   cap.scrollTop = 0;
 }
 
-function updatePanel(sentence: string, index: number, total: number, timestamps?: WordTs[]): void {
+function updatePanel(sentence: string, index: number, total: number, timestamps?: WordTs[], pageMatched = false): void {
   if (!panelShadow) return;
   const fill = panelShadow.getElementById('spiel-progress') as HTMLElement;
   const lbl  = panelShadow.getElementById('spiel-progress-label');
@@ -1045,10 +1059,20 @@ function updatePanel(sentence: string, index: number, total: number, timestamps?
   if (pp)   { pp.innerHTML = PAUSE_ICON; (pp as HTMLElement).title = 'Pause'; }
   isPaused = false;
 
-  // Show the sentence + seed timing so the caption karaoke runs even without page words
-  // (PDFs). For articles, highlightSentenceInPage re-sets curTs to the same value — safe.
-  renderPanelSentence(sentence);
-  curTs = (timestamps || []).filter(t => normWord(t.word));
+  // Karaoke stage, in priority order: the page itself (article highlight landed →
+  // caption would be a duplicate), the summary modal, else the caption (PDFs,
+  // selections, and sentences the page matcher can't find — the E8 fallback).
+  const cap = panelShadow.getElementById('spiel-caption') as HTMLElement | null;
+  if (pageMatched) {
+    if (cap) cap.textContent = '';
+    panelWords = []; panelActiveWord = -1;
+  } else if (isSelectionMode && focusSummarySentence(index)) {
+    if (cap) cap.textContent = ''; // modal is the stage; don't duplicate below it
+  } else {
+    renderPanelSentence(sentence);
+  }
+  // Timing seed: highlightSentenceInPage already set curTs when the page matched.
+  if (!pageMatched) curTs = (timestamps || []).filter(t => normWord(t.word));
 }
 
 function setPanelPaused(paused: boolean): void {
@@ -1071,6 +1095,159 @@ function removePanel(): void {
   panelActiveWord = -1;
   isSelectionMode = false;
   setArticleSentences([]);
+}
+
+// ── Summary modal ──────────────────────────────────────────────────────────────
+
+const SUMMARY_CSS = `
+:host { position: fixed; inset: 0; z-index: 2147483647;
+  font-family: 'Avenir Next', 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --surface: #ffffff; --text: #1b1b1f; --muted: #8a8b93; --border: rgba(0,0,0,0.09);
+  --accent: #FF385C; --scrim: rgba(250, 247, 246, 0.55); --read: rgba(255, 56, 92, 0.10);
+}
+@media (prefers-color-scheme: dark) {
+  :host { --surface: #1d1a1d; --text: #f2f2f5; --muted: #9c938e; --border: rgba(255,255,255,0.1);
+          --accent: #FF5674; --scrim: rgba(12, 10, 12, 0.6); --read: rgba(255, 86, 116, 0.14); }
+}
+.scrim { position: absolute; inset: 0; background: var(--scrim);
+  backdrop-filter: blur(7px) saturate(120%); -webkit-backdrop-filter: blur(7px) saturate(120%);
+  animation: fade .18s ease; }
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+.card { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(660px, calc(100vw - 48px)); max-height: min(78vh, 820px);
+  display: flex; flex-direction: column; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 20px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.3), 0 2px 8px rgba(0,0,0,.12);
+  animation: pop .22s cubic-bezier(.2,.9,.3,1.2); overflow: hidden; }
+@keyframes pop { from { opacity: 0; transform: translate(-50%, -47%) scale(.97) } to { opacity: 1; transform: translate(-50%, -50%) scale(1) } }
+.head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
+.mark { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); flex-shrink: 0;
+  display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; padding: 8px 7px; }
+.mark i { width: 3.5px; border-radius: 2px; background: #fff; display: block; }
+.mark i:nth-child(1){height:36%} .mark i:nth-child(2){height:65%} .mark i:nth-child(3){height:100%}
+.mark i:nth-child(4){height:65%} .mark i:nth-child(5){height:36%}
+.titles { min-width: 0; }
+.kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.title { font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.x { margin-left: auto; width: 32px; height: 32px; border: none; border-radius: 999px; background: transparent;
+  color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; flex-shrink: 0; }
+.x:hover { background: var(--read); color: var(--text); }
+.body { padding: 20px 24px 12px; overflow-y: auto; font-size: 16.5px; line-height: 1.78;
+  letter-spacing: .003em; scrollbar-width: thin; }
+.body .flow { margin: 0; }
+.body .s { border-radius: 6px; padding: 1px 3px; transition: background .2s ease;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.body .s.active { background: var(--read); }
+.body .w { border-radius: 4px; padding: 0 1px; }
+.body .w.active { background: var(--accent); color: #fff; }
+.foot { display: flex; align-items: center; gap: 14px; padding: 14px 20px 18px; border-top: 1px solid var(--border); }
+.listen { display: inline-flex; align-items: center; gap: 9px; background: var(--accent); color: #fff;
+  border: none; border-radius: 12px; padding: 12px 22px; font-size: 15px; font-weight: 650;
+  font-family: inherit; cursor: pointer; transition: filter .15s, transform .05s; }
+.listen:hover { filter: brightness(.93); } .listen:active { transform: translateY(1px); }
+.listen svg { width: 16px; height: 16px; fill: currentColor; }
+.hint { font-size: 12.5px; color: var(--muted); }
+`;
+
+function removeSummaryModal(): void {
+  summaryAbort?.abort(); summaryAbort = null;
+  summaryHost?.remove(); summaryHost = null; summaryShadow = null;
+  summarySentSpans = []; summaryActiveSent = -1;
+  // If the karaoke was pointed at modal spans, detach; the caption re-renders next sentence.
+  panelWords = []; panelActiveWord = -1;
+}
+
+function createSummaryModal(title: string, summary: string): void {
+  removeSummaryModal();
+  const sentences = splitIntoSentences(summary); // same splitter as playback → indices align
+
+  summaryHost = document.createElement('div');
+  summaryHost.id = 'spiel-summary-host';
+  document.body.appendChild(summaryHost);
+  summaryShadow = summaryHost.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = SUMMARY_CSS;
+  summaryShadow.appendChild(style);
+
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="head">
+      <div class="mark"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="titles"><div class="kicker">Summary</div><div class="title"></div></div>
+      <button class="x" title="Close">✕</button>
+    </div>
+    <div class="body" id="spiel-sum-body"></div>
+    <div class="foot">
+      <button class="listen" id="spiel-sum-listen">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Listen
+      </button>
+      <span class="hint">Words highlight as it reads · Esc to close</span>
+    </div>`;
+  (card.querySelector('.title') as HTMLElement).textContent = title || document.title || '';
+
+  // One flowing paragraph; each playback sentence is an inline span. (The splitter cuts
+  // the first sentence's opening clause for TTS latency — rendering per-sentence <p>s
+  // exposed that as a broken paragraph. Inline spans read as natural prose and keep the
+  // sentence indices aligned with playback.)
+  const body = card.querySelector('#spiel-sum-body') as HTMLElement;
+  const flow = document.createElement('p');
+  flow.className = 'flow';
+  summarySentSpans = sentences.map((s, i) => {
+    const sent = document.createElement('span');
+    sent.className = 's';
+    const spans: HTMLElement[] = [];
+    for (const part of s.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) { sent.appendChild(document.createTextNode(' ')); continue; }
+      const w = document.createElement('span');
+      w.className = 'w'; w.textContent = part;
+      sent.appendChild(w); spans.push(w);
+    }
+    flow.appendChild(sent);
+    if (i < sentences.length - 1) flow.appendChild(document.createTextNode(' '));
+    return spans;
+  });
+  body.appendChild(flow);
+
+  summaryShadow.appendChild(scrim);
+  summaryShadow.appendChild(card);
+
+  summaryAbort = new AbortController();
+  const sig = summaryAbort.signal;
+  (card.querySelector('.x') as HTMLElement).addEventListener('click', removeSummaryModal, { signal: sig });
+  scrim.addEventListener('click', removeSummaryModal, { signal: sig });
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { e.stopPropagation(); removeSummaryModal(); }
+  }, { signal: sig, capture: true });
+
+  const listen = card.querySelector('#spiel-sum-listen') as HTMLButtonElement;
+  listen.addEventListener('click', () => {
+    if (!extensionAlive()) return;
+    chrome.runtime.sendMessage({ type: 'PLAY_SUMMARY', text: summary });
+  }, { signal: sig });
+
+  log('Summary modal shown:', sentences.length, 'sentences');
+}
+
+// Point the karaoke at the modal's sentence `index`. Returns false if the modal
+// isn't showing (caller falls back to the floating-player caption).
+function focusSummarySentence(index: number): boolean {
+  if (!summaryShadow || !summarySentSpans.length) return false;
+  const spans = summarySentSpans[index];
+  if (!spans) return false;
+  if (summaryActiveSent >= 0) summarySentSpans[summaryActiveSent]?.[0]?.parentElement?.classList.remove('active');
+  const p = spans[0]?.parentElement;
+  p?.classList.add('active');
+  p?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
+  panelWords = spans;
+  panelActiveWord = -1;
+  summaryActiveSent = index;
+  return true;
 }
 
 // ── Selection detection ────────────────────────────────────────────────────────
@@ -1137,6 +1314,12 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === 'SHOW_SUMMARY') {
+    createSummaryModal(message.title || '', message.summary || '');
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (message.type === 'HIDE_PLAYER') {
     removePanel();
     hideSelectionButton();
@@ -1156,8 +1339,13 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
         });
       }
     }
-    updatePanel(message.sentence, message.index, message.total, message.timestamps);
-    if (!isSelectionMode && wordsBuilt) highlightSentenceInPage(message.sentence, message.timestamps);
+    // Page highlight FIRST — if it lands, the caption is redundant (the page is the
+    // stage) and updatePanel hides it. Caption remains the stage for PDFs, selections,
+    // and any sentence the page matcher can't find (E8 fallback).
+    const pageMatched = !isSelectionMode && wordsBuilt
+      ? highlightSentenceInPage(message.sentence, message.timestamps)
+      : false;
+    updatePanel(message.sentence, message.index, message.total, message.timestamps, pageMatched);
     sendResponse({ ok: true });
     return false;
   }

@@ -264,19 +264,23 @@ function sumReset(keepErrorMs = 0) {
 // Extract the page's readable text directly from the popup: content script for
 // articles, pdf-content.js for PDFs. Mirrors background's extractArticleForTab but
 // with zero relay hops. Returns {ok, title, sentences, text} or {error}.
+// Make sure content.js answers in the tab (injecting it if needed). Used by extraction
+// and by the summary-modal handoff (PDF tabs only get pdf-content.js during extraction).
+async function ensureContentScriptInTab(tabId) {
+  try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; } catch {}
+  try { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); } catch { return false; }
+  for (let i = 0; i < 20; i++) {
+    try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; }
+    catch { await new Promise(r => setTimeout(r, 50)); }
+  }
+  return false;
+}
+
 async function popupExtractArticle(tab) {
   const tabId = tab.id;
   const url = (tab.url || '').toLowerCase();
 
-  const ensureCS = async () => {
-    try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; } catch {}
-    try { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); } catch { return false; }
-    for (let i = 0; i < 20; i++) {
-      try { await chrome.tabs.sendMessage(tabId, { type: 'PING' }); return true; }
-      catch { await new Promise(r => setTimeout(r, 50)); }
-    }
-    return false;
-  };
+  const ensureCS = () => ensureContentScriptInTab(tabId);
 
   const pdfExtract = async () => {
     try { await chrome.scripting.executeScript({ target: { tabId }, files: ['pdf-content.js'] }); }
@@ -418,13 +422,12 @@ btnSummarize.addEventListener('click', async () => {
       if (signal.aborted) throw { name: 'AbortError' };
       if (!summary?.trim()) throw { ui: 'The summarizer returned nothing — try again.' };
 
-      // Hand off to playback: floating player takes over, popup closes when audio starts.
-      closeOnPlayback = true;
-      chrome.runtime.sendMessage({ type: 'PLAY_SUMMARY', text: summary.trim(), voice: voiceSelect.value, speed: curSpeed });
-      sumUi('Starting playback…', { progress: 1 });
-      setTimeout(pollStatus, 150);
-      setTimeout(pollStatus, 400);
-      setTimeout(() => sumReset(), 2500); // popup usually closes first; reset is a fallback
+      // Hand off to the in-page summary modal — NO autoplay. The user reads it and
+      // presses Listen there when they want it spoken (the modal drives the karaoke).
+      await ensureContentScriptInTab(tab.id); // PDF tabs may not have content.js yet
+      await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_SUMMARY', title: page.title, summary: summary.trim() });
+      sumUi('Summary ready — showing on the page', { progress: 1 });
+      setTimeout(() => window.close(), 500); // the modal is the UI now
     } finally { s.destroy?.(); }
   } catch (e) {
     if (e?.name === 'AbortError') { sumReset(); return; } // user cancelled — quiet reset

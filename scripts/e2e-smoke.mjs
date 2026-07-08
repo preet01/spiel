@@ -111,7 +111,46 @@ try {
     await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'STOP' })).catch(() => {});
   }
 
-  // 6. No uncaught Spiel errors anywhere
+  // 6. Summary modal: SHOW_SUMMARY renders in-page, Listen starts playback
+  const SUM_TEXT = 'This is the automated summary. It has three sentences for the karaoke. The modal must highlight them.';
+  await popup.evaluate(async ({ tabId, text }) => {
+    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SUMMARY', title: 'E2E', summary: text });
+  }, { tabId: articleTab.id, text: SUM_TEXT });
+  await article.waitForTimeout(400);
+  const modal = await article.evaluate(() => {
+    const host = document.getElementById('spiel-summary-host');
+    const sh = host?.shadowRoot;
+    return {
+      exists: !!host,
+      sentences: sh ? sh.querySelectorAll('.body .s').length : 0,
+      words: sh ? sh.querySelectorAll('.body .w').length : 0,
+      hasListen: !!sh?.getElementById('spiel-sum-listen'),
+    };
+  });
+  (modal.exists && modal.sentences === 3 && modal.hasListen)
+    ? ok('summary modal renders', `${modal.sentences} sentences, ${modal.words} word spans`)
+    : bad('summary modal', JSON.stringify(modal));
+
+  if (engineUp && modal.hasListen) {
+    await article.evaluate(() => {
+      (document.getElementById('spiel-summary-host').shadowRoot.getElementById('spiel-sum-listen')).click();
+    });
+    let status = 'unknown', activeSent = 0;
+    for (let i = 0; i < 30; i++) {
+      await popup.waitForTimeout(500);
+      const st = await popup.evaluate(async () => (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }))?.state);
+      status = st?.status || 'no-state';
+      activeSent = await article.evaluate(() =>
+        document.getElementById('spiel-summary-host')?.shadowRoot?.querySelectorAll('.body .s.active').length ?? 0);
+      if ((status === 'playing' && activeSent > 0) || status === 'done' || status === 'error') break;
+    }
+    (status === 'playing' || status === 'done') && activeSent > 0
+      ? ok('modal Listen → playback + karaoke on modal', `status ${status}, active sentence highlighted`)
+      : bad('modal Listen flow', `status ${status}, activeSent ${activeSent}`);
+    await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'STOP' })).catch(() => {});
+  }
+
+  // 7. No uncaught Spiel errors anywhere
   const spielErrors = errors.filter(e => !/net::|favicon|ERR_BLOCKED/.test(e));
   spielErrors.length === 0 ? ok('no uncaught extension errors') : bad('uncaught errors', spielErrors.join(' | ').slice(0, 300));
 } catch (e) {
