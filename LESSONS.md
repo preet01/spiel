@@ -134,6 +134,15 @@
 - **Fix:** `extensionAlive()` guard (`chrome.runtime?.id` in try/catch) at every document-level listener entry; orphans remove their UI and go quiet — the freshly injected script takes over.
 - **Rule:** a content script must assume it WILL be orphaned. Guard every entry point that touches `chrome.*`, and fail silent — the replacement script owns the tab now.
 
+### E12 — Highlight died after quotations: splitter + matcher two-punch (found via diagnose-page)
+- **Symptom:** recurring "highlight stops mid/after a paragraph" on real articles; caption fallback appeared. Reproduced deterministically with `scripts/diagnose-page.mjs` on the reported Substack URL: 111/112 sentences aligned, failing sentence pinpointed with the exact token pair.
+- **Root causes (2):**
+  1. The sentence splitter required `[.!?]` immediately before whitespace — `…are common." These` (period + **closing curly quote**) never split, gluing every quotation-ending sentence to the next paragraph. Bonus trap: the curly quotes I first added to the regex were **silently normalized to straight quotes** on write — typography characters in regexes must be `\uXXXX` escapes.
+  2. The page matcher allowed only 2 stray DOM tokens per sentence; extraction legitimately skips headings/captions that sit mid-flow in the DOM (a 4-word heading broke the match). Budget now scales with sentence length (`max(3, len/4)`, cap 12).
+- **Mistake classes:** punctuation-class blind spots in NLP regexes; flat tolerances vs. real-world variance; invisible character-normalization corrupting source.
+- **Fix + tooling:** both fixed; `scripts/diagnose-page.mjs <url>` now measures sentence↔page alignment on ANY live URL and names the exact break token — highlight bugs are measurable, not anecdotal. Result on the reported page: **100.0% aligned**.
+- **Rule:** for text-matching bugs, build the measurement first (alignment %), then fix — and never put literal curly quotes in source; escape them.
+
 ### E10 — Summarizer rejected: missing required `outputLanguage` (+ unreadable logs)
 - **Symptom:** Summarize failed; console showed `summarize failed: [object Object]` and a separate Chrome warning: *"No output language was specified in a Summarizer API request… specify a supported output language code: [de, en, es, fr, ja]"*.
 - **Root cause (2):** (a) Chrome 150 turned `outputLanguage` from optional into effectively required — the API contract tightened between versions; (b) our catch logged the raw thrown object, which prints as `[object Object]`, hiding the reason.

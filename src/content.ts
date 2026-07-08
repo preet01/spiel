@@ -71,16 +71,15 @@ function cleanText(s: string): string {
   return s.replace(/\[[\d]+\]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Enhanced skipping (Speechify-style): user-toggleable content filters, applied at
-// extraction time. Loaded from storage at the start of each extraction.
-let skipOpts = { skipUrls: true, skipBrackets: true, skipParens: false };
-
+// Content skipping: URLs, [reference brackets] and (parentheticals) are ALWAYS removed
+// from the spoken text — they read terribly aloud. (These were user toggles once;
+// nobody needed that much nuance, so they're now sensible fixed behavior.)
 function applySkips(text: string): string {
-  let t = text;
-  if (skipOpts.skipUrls)     t = t.replace(/\bhttps?:\/\/\S+|\bwww\.\S+/gi, ' ');
-  if (skipOpts.skipBrackets) t = t.replace(/\[[^\]]{0,120}\]/g, ' ');  // [12], [citation needed], [Smith et al.]
-  if (skipOpts.skipParens)   t = t.replace(/\([^()]{0,200}\)/g, ' ');  // non-nested parentheticals only
-  return t.replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/\bhttps?:\/\/\S+|\bwww\.\S+/gi, ' ')
+    .replace(/\[[^\]]{0,120}\]/g, ' ')   // [12], [citation needed], [Smith et al.]
+    .replace(/\([^()]{0,200}\)/g, ' ')   // non-nested parentheticals only
+    .replace(/\s+/g, ' ').trim();
 }
 
 function buildResult(title: string, rawText: string) {
@@ -148,10 +147,7 @@ function isPdfPage(): boolean {
 let articleCache: { href: string; opts: string; at: number; data: any } | null = null;
 
 async function extractArticleCached() {
-  try {
-    skipOpts = await chrome.storage.sync.get({ skipUrls: true, skipBrackets: true, skipParens: false }) as typeof skipOpts;
-  } catch { /* keep defaults */ }
-  const opts = JSON.stringify(skipOpts);
+  const opts = 'fixed'; // skips are no longer configurable — cache key kept for shape
   if (articleCache && articleCache.href === location.href && articleCache.opts === opts
       && Date.now() - articleCache.at < 300000) {
     log('Article served from prewarm cache');
@@ -294,7 +290,10 @@ function scanWordRun(target: string[], from: number): { start: number; end: numb
     while (k < t && j < n) {
       const a = words[j].w, b = target[k];
       if (a === b || a.startsWith(b) || b.startsWith(a)) { indices.push(j); k++; j++; }
-      else { skips++; j++; if (skips > 2) break; }
+      // Stray budget scales with sentence length: extraction legitimately skips DOM
+      // words the page still has (headings between paragraphs, footnote markers,
+      // skip-filtered [refs]/URLs). A flat cap of 2 failed real articles (E12).
+      else { skips++; j++; if (skips > Math.min(12, Math.max(3, Math.floor(t / 4)))) break; }
     }
     if (k === t) return { start: i, end: j - 1, indices };
   }
@@ -333,6 +332,27 @@ function buildSentenceRuns(): void {
     if (run) cursor = run.end + 1;
   }
   log(`Sentence runs built: ${sentenceRuns.filter(Boolean).length}/${articleSentences.length} aligned`);
+}
+
+// Diagnostic twin of scanWordRun (used by DEBUG_MATCH / scripts/diagnose-page.mjs):
+// same algorithm, but on failure reports the best attempt and the exact token pair
+// where matching broke — so real-page failures are debuggable instead of mysterious.
+function debugScan(target: string[], from: number): { matched: boolean; k: number; failA?: string; failB?: string } {
+  const n = words.length;
+  let best = { k: 0, failA: '', failB: '' };
+  for (let i = Math.max(0, from); i < n; i++) {
+    if (words[i].w !== target[0] && !words[i].w.startsWith(target[0])) continue;
+    let k = 1, j = i + 1, skips = 0, failA = '', failB = '';
+    const budget = Math.min(12, Math.max(3, Math.floor(target.length / 4))); // keep in sync with scanWordRun
+    while (k < target.length && j < n) {
+      const a = words[j].w, b = target[k];
+      if (a === b || a.startsWith(b) || b.startsWith(a)) { k++; j++; }
+      else { skips++; j++; if (skips > budget) { failA = a; failB = b; break; } }
+    }
+    if (k === target.length) return { matched: true, k };
+    if (k > best.k) best = { k, failA, failB };
+  }
+  return { matched: false, ...best };
 }
 
 function sentenceIndexForWord(wordIdx: number): number {
@@ -1381,6 +1401,28 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
     panelActiveWord = -1;
     sendResponse({ ok: true });
+    return false;
+  }
+
+  // Diagnostic: align every provided sentence against the page's word index and
+  // report each failure with the token pair where it broke. Read-only; no UI.
+  if (message.type === 'DEBUG_MATCH') {
+    if (!wordsBuilt) buildWordIndex();
+    const report: any[] = [];
+    let cursor = 0;
+    for (let i = 0; i < (message.sentences || []).length; i++) {
+      const s: string = message.sentences[i];
+      const target = s.split(/\s+/).map(normWord).filter(Boolean);
+      let r = debugScan(target, cursor);
+      if (!r.matched && cursor > 0) r = debugScan(target, 0);
+      if (r.matched) cursor += 1; // real playback advances its cursor only on success
+      report.push({
+        i, matched: r.matched, len: target.length, bestK: r.matched ? target.length : r.k,
+        failA: r.failA || '', failB: r.failB || '',
+        text: s.slice(0, 80),
+      });
+    }
+    sendResponse({ ok: true, totalWords: words.length, report });
     return false;
   }
 

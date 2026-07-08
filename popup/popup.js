@@ -11,12 +11,7 @@ const cardIdle      = $('card-idle');
 const cardSetup     = $('card-setup');
 const setupCmd      = $('setup-cmd');
 const btnCopyCmd    = $('btn-copy-cmd');
-const cardPlaying   = $('card-playing');
 const cardError     = $('card-error');
-const articleTitle  = $('article-title');
-const sentencePreview = $('sentence-preview');
-const progressFill  = $('progress-fill');
-const progressText  = $('progress-text');
 const errorMsg      = $('error-msg');
 const ctrlIdle      = $('controls-idle');
 const ctrlPlaying   = $('controls-playing');
@@ -26,10 +21,6 @@ const btnPause      = $('btn-pause');
 const btnStop       = $('btn-stop');
 const btnPrev       = $('btn-prev');
 const btnNext       = $('btn-next');
-const timeLeft      = $('time-left');
-const skipUrls      = $('skip-urls');
-const skipBrackets  = $('skip-brackets');
-const skipParens    = $('skip-parens');
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 const PLAY_SVG  = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
@@ -58,22 +49,8 @@ function buildSpeedChips() {
   }
 }
 
-const WPM_BASE = 175; // Kokoro af_* voices ≈ 175 wpm at 1×
-
-// Word counts per sentence, memoized per article (recomputed when the title changes)
-let wordCountsFor = null;
-let wordCounts = [];
-function timeLeftLabel(article, currentIndex) {
-  if (!article?.sentences?.length) return '';
-  if (wordCountsFor !== article.title) {
-    wordCountsFor = article.title;
-    wordCounts = article.sentences.map(s => s.split(/\s+/).filter(Boolean).length);
-  }
-  let remaining = 0;
-  for (let i = currentIndex; i < wordCounts.length; i++) remaining += wordCounts[i];
-  const mins = remaining / (WPM_BASE * (curSpeed || 1));
-  return mins < 1 ? '<1 min' : `~${Math.round(mins)} min`;
-}
+// (Playing-card metadata — title/preview/progress/time-left — was removed from the
+// popup: the floating in-page player already shows all of it; duplication confused.)
 
 // ── Local state ───────────────────────────────────────────────────────────────
 let lastStatus = 'idle';
@@ -82,10 +59,7 @@ let pollInterval = null;
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async function init() {
   // Load saved preferences
-  const saved = await chrome.storage.sync.get({
-    voice: 'af_heart', speed: 1.0,
-    skipUrls: true, skipBrackets: true, skipParens: false,
-  });
+  const saved = await chrome.storage.sync.get({ voice: 'af_heart', speed: 1.0 });
   // A saved voice outside the curated 4 stays usable as an extra option.
   if (![...voiceSelect.options].some(o => o.value === saved.voice)) {
     const suffix = String(saved.voice).split('_')[1] || saved.voice;
@@ -97,9 +71,6 @@ let pollInterval = null;
   voiceSelect.value = saved.voice;
   curSpeed = parseFloat(saved.speed) || 1.0;
   buildSpeedChips();
-  skipUrls.checked     = saved.skipUrls;
-  skipBrackets.checked = saved.skipBrackets;
-  skipParens.checked   = saved.skipParens;
 
   // Start polling
   pollStatus();
@@ -148,7 +119,6 @@ function applyState(state) {
 
   // Card visibility
   cardIdle.classList.toggle('hidden', needsSetup || (status !== 'idle' && status !== 'done'));
-  cardPlaying.classList.toggle('hidden', status !== 'playing' && status !== 'paused');
   cardError.classList.toggle('hidden', needsSetup || status !== 'error');
 
   // Controls
@@ -169,15 +139,6 @@ function applyState(state) {
     cardIdle.querySelector('.status-hint').innerHTML = 'Open any article and click <strong>Play</strong> to start reading.';
   }
 
-  // Playing card
-  if ((status === 'playing' || status === 'paused') && article) {
-    articleTitle.textContent = article.title || 'Article';
-    sentencePreview.textContent = article.sentences?.[currentIndex] || '…';
-    const total = article.sentences?.length || 1;
-    progressFill.style.width = `${((currentIndex + 1) / total) * 100}%`;
-    progressText.textContent = `${currentIndex + 1} / ${total}`;
-    timeLeft.textContent = timeLeftLabel(article, currentIndex);
-  }
 
   // Pause button label
   if (status === 'paused') {
@@ -210,10 +171,6 @@ voiceSelect.addEventListener('change', () => {
   chrome.runtime.sendMessage({ type: 'UPDATE_SETTINGS', voice });
 });
 
-// Skip toggles — read by the content script at extraction time (next Play)
-skipUrls.addEventListener('change',     () => chrome.storage.sync.set({ skipUrls: skipUrls.checked }));
-skipBrackets.addEventListener('change', () => chrome.storage.sync.set({ skipBrackets: skipBrackets.checked }));
-skipParens.addEventListener('change',   () => chrome.storage.sync.set({ skipParens: skipParens.checked }));
 
 // When the user starts a read, the in-page floating player becomes the live UI — so we
 // close this popup to avoid two competing Spiel UIs. We close only once reading actually
@@ -346,6 +303,27 @@ btnSummarize.addEventListener('click', async () => {
   btnSummarize.innerHTML = 'Cancel';
 
   try {
+    // Resolve the tab first: a cached summary needs no AI at all.
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw { ui: 'Could not find the active tab — click into the page once and retry.' };
+
+    // A stale PAUSED session from an earlier read makes the popup show Resume/Stop,
+    // which reads as nonsense next to "I just summarized". Clear it (never interrupt
+    // audio that is actively playing, though).
+    if (lastStatus === 'paused') chrome.runtime.sendMessage({ type: 'STOP' }).catch(() => {});
+
+    // Summaries are retained per URL for the browser session — re-showing is instant.
+    const cacheKey = 'spielSummary:' + (tab.url || tab.id);
+    const cached = (await chrome.storage.session.get(cacheKey))[cacheKey];
+    if (cached?.summary) {
+      sumUi('Summary ready (saved) — showing on the page', { progress: 1 });
+      await ensureContentScriptInTab(tab.id);
+      await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_SUMMARY', title: cached.title || '', summary: cached.summary });
+      summarizing = false; sumAbort = null;
+      setTimeout(() => window.close(), 400);
+      return;
+    }
+
     if (!('Summarizer' in self)) {
       throw { ui: 'Needs Chrome 138+ with built-in AI. Update Chrome and try again.' };
     }
@@ -381,8 +359,6 @@ btnSummarize.addEventListener('click', async () => {
     // extension page (same chrome.scripting/tabs access), and the old popup→background→
     // content-script→back relay dropped its response in MV3 ("no response from the
     // reader"). Point-to-point messaging has no relay to drop (E9).
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw { ui: 'Could not find the active tab — click into the page once and retry.' };
     const page = await popupExtractArticle(tab);
     if (signal.aborted) throw { name: 'AbortError' };
     if (!page?.ok) throw { ui: page?.error || 'Could not read this page. Try reloading it.' };
@@ -421,6 +397,10 @@ btnSummarize.addEventListener('click', async () => {
       const summary = await s.summarize(input, { context: `A summary of "${page.title}", to be read aloud.` });
       if (signal.aborted) throw { name: 'AbortError' };
       if (!summary?.trim()) throw { ui: 'The summarizer returned nothing — try again.' };
+
+      // Retain the summary for this URL (session-scoped) — re-summarizing the same
+      // page later is instant and free.
+      chrome.storage.session.set({ [cacheKey]: { title: page.title, summary: summary.trim(), at: Date.now() } }).catch(() => {});
 
       // Hand off to the in-page summary modal — NO autoplay. The user reads it and
       // presses Listen there when they want it spoken (the modal drives the karaoke).

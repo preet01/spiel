@@ -493,6 +493,25 @@ async function extractArticleForTab(tabId: number, url: string):
   return { ok: true, data };
 }
 
+// Locate the sentence containing the start of `selection` (normalized word sequence).
+// Used to turn "play selection" into "read from here to the end of the page".
+function findSentenceContaining(sentences: string[], selection: string): number {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9à-ɏ\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+  const probe = norm(selection).split(' ').slice(0, 6).join(' ');
+  if (probe.length < 8) return -1; // too little signal — fall back to isolated playback
+  for (let i = 0; i < sentences.length; i++) {
+    if (norm(sentences[i]).includes(probe)) return i;
+  }
+  // Selection may straddle a sentence boundary — retry with a shorter probe.
+  const short = norm(selection).split(' ').slice(0, 3).join(' ');
+  if (short.length >= 8) {
+    for (let i = 0; i < sentences.length; i++) {
+      if (norm(sentences[i]).includes(short)) return i;
+    }
+  }
+  return -1;
+}
+
 async function startPlayback(voice: string, speed: number, selectionText?: string, selectionTitle?: string): Promise<void> {
   const t0 = Date.now();
   sessionStartT = t0;
@@ -523,8 +542,26 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
   warmUp(); // fire-and-forget; debounced
 
   let articleData: any;
+  let startIndex = 0;
 
-  if (selectionText) {
+  if (selectionText && !selectionTitle) {
+    // A page selection means "read from HERE to the end" — locate the selection inside
+    // the full article and play from that sentence onward (with page highlighting),
+    // instead of stopping when the selected fragment ends. Falls back to isolated
+    // selection playback when the selection can't be found in the extraction.
+    const ext = await extractArticleForTab(currentTabId, tab.url || '');
+    if (myGen !== generation) return;
+    if (ext.ok) {
+      const idx = findSentenceContaining(ext.data.sentences, selectionText);
+      if (idx >= 0) {
+        articleData = ext.data;
+        startIndex = idx;
+        log(`Selection located at sentence ${idx + 1}/${ext.data.sentences.length} — reading to end of page`);
+      }
+    }
+  }
+
+  if (selectionText && !articleData) {
     const sentences = splitIntoSentences(selectionText);
     log('Selection split into', sentences.length, 'sentences');
     // A selection of pure symbols/whitespace splits to nothing — error out cleanly here
@@ -541,7 +578,7 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
     // is mid-generation, which made every selection feel stuck. If the server is truly
     // down, the first clip fetch fails fast and the error path diagnoses it.
     articleData = { title: selectionTitle || 'Selection', sentences, totalWords: selectionText.split(/\s+/).length, isSelection: true };
-  } else {
+  } else if (!selectionText) {
     const ext = await extractArticleForTab(currentTabId, tab.url || '');
     if (myGen !== generation) return; // user started something else meanwhile
     if (!ext.ok) {
@@ -557,12 +594,14 @@ async function startPlayback(voice: string, speed: number, selectionText?: strin
   if (myGen !== generation) return;
 
   state.article = articleData;
-  state.currentIndex = 0;
+  state.currentIndex = startIndex; // >0 when a selection was located mid-article
 
   chrome.tabs.sendMessage(currentTabId, {
     type: 'SHOW_PLAYER',
     title: articleData.title,
-    isSelection: !!selectionText,
+    // Selection-located-in-article plays as a normal article (page highlighting on);
+    // only isolated text (unlocatable selection, Summary) uses selection mode.
+    isSelection: !!articleData.isSelection,
     voice: state.voice,
     speed: state.speed,
     // Sentences let the panel align sentence→DOM runs for click-to-jump and compute time left.

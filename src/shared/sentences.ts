@@ -37,10 +37,15 @@ export function splitIntoSentences(text: string): string[] {
   // seen when extraction concatenates block elements. Runs AFTER the protections above,
   // so abbreviations/decimals/initials are exempt. Without the space, the split below
   // can't fire and the glued token breaks page-highlight matching too (E8).
-  t = t.replace(/([.!?])(["'""»)\]]?)([A-Z0-9À-Ý])/g, '$1$2 $3');
+  t = t.replace(/([.!?])(["'’”»)\]]?)([A-Z0-9À-Ý])/g, '$1$2 $3');
 
-  // Split on sentence-ending punctuation followed by whitespace + an uppercase/quote/digit start.
-  const parts = t.split(/(?<=[.!?])\s+(?=[A-Z"'""""À-ɏ0-9])/);
+  // Split on sentence-ending punctuation followed by whitespace + an uppercase/quote/digit
+  // start. The optional closing quote/bracket matters: `…are common." These` must split —
+  // without it, every sentence that ends inside a quotation glues to the next paragraph,
+  // and the page-highlight matcher then fails on the glued mega-sentence (E12).
+  // NOTE: quote characters are written as \uXXXX escapes — literal curly quotes get
+  // silently normalized to straight quotes by some editors/tools, breaking the class.
+  const parts = t.split(/(?<=[.!?]["'’”»)\]]?)\s+(?=[A-Z"'‘“«À-ɏ0-9])/);
 
   // Restore protected patterns
   const restore = (s: string) =>

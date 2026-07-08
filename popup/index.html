@@ -31,18 +31,8 @@
       <p class="status-hint">Open any article, then click <strong>Play</strong>. Or select any text on the page for instant reading.</p>
     </div>
 
-    <!-- Playing card -->
-    <div class="playing-card hidden" id="card-playing">
-      <div class="article-title" id="article-title">—</div>
-      <div class="sentence-preview" id="sentence-preview">…</div>
-      <div class="progress-row">
-        <div class="progress-track">
-          <div class="progress-fill" id="progress-fill"></div>
-        </div>
-        <span class="progress-text" id="progress-text">0 / 0</span>
-        <span class="progress-text" id="time-left" title="Estimated time left at current speed"></span>
-      </div>
-    </div>
+    <!-- (No playing card: while reading, the floating in-page player is the single
+         source of progress/preview — duplicating it here confused users.) -->
 
     <!-- Setup card: voice engine not installed yet -->
     <div class="setup-card hidden" id="card-setup">
@@ -78,12 +68,8 @@
         <span class="setting-label">Speed</span>
         <div class="chips" id="speed-chips"></div>
       </div>
-      <div class="setting-row" title="Applied the next time you press Play">
-        <span class="setting-label">Skip</span>
-        <label class="skip-toggle"><input type="checkbox" id="skip-urls"> URLs</label>
-        <label class="skip-toggle"><input type="checkbox" id="skip-brackets"> [refs]</label>
-        <label class="skip-toggle"><input type="checkbox" id="skip-parens"> (parens)</label>
-      </div>
+      <!-- (Skip toggles removed: URLs, [refs] and (parens) are always skipped —
+           the per-toggle control was more nuance than anyone needed.) -->
     </div>
 
     <!-- Controls: Idle -->

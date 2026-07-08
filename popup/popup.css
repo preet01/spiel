@@ -226,6 +226,11 @@ html, body {
 
 .voice-select {
   flex: 1;
+  width: 100%;
+  min-width: 0;      /* flex items refuse to shrink below content width without this —
+                        the long voice labels were overflowing the popup edge */
+  max-width: 100%;
+  text-overflow: ellipsis;
   background: var(--bg3);
   border: none;
   border-radius: 8px;
