@@ -1,3 +1,8 @@
+// Spiel content script — injected on every http/https page. Everything the user SEES
+// on the page lives here: article extraction (Readability + site selectors), the
+// word-by-word karaoke highlight, the floating player panel, and the selection
+// "read this" pill. Talks to the background worker for audio; renders in shadow
+// roots so host-page CSS can't touch it.
 import { Readability } from '@mozilla/readability';
 import { splitIntoSentences } from './shared/sentences';
 
@@ -38,14 +43,6 @@ let curDur = 0;                    // actual clip duration (s) — timestamps ca
 // the page has no highlightable DOM (PDFs), so PDF reading still gets a follow-along.
 let panelWords: HTMLElement[] = [];
 let panelActiveWord = -1;
-
-// Summary modal — a designed in-page overlay showing the on-device summary. Playback is
-// user-initiated (Listen button); while reading, the karaoke highlights the MODAL text.
-let summaryHost: HTMLElement | null = null;
-let summaryShadow: ShadowRoot | null = null;
-let summaryAbort: AbortController | null = null;
-let summarySentSpans: HTMLElement[][] = [];  // word spans per summary sentence
-let summaryActiveSent = -1;
 
 // ── Article extraction ─────────────────────────────────────────────────────────
 
@@ -444,9 +441,6 @@ function highlightPanelWord(di: number) {
   const el = panelWords[idx];
   el.classList.add('active');
   panelActiveWord = idx;
-  // Summary modal handles its own sentence-level scrolling; only the caption needs
-  // per-word scroll. Never scroll the host page from here.
-  if (summaryShadow && summaryActiveSent >= 0) return;
   const cap = panelShadow?.getElementById('spiel-caption') as HTMLElement | null;
   if (cap && cap.scrollHeight > cap.clientHeight) {
     cap.scrollTo({ top: el.offsetTop - cap.clientHeight / 2 + el.offsetHeight / 2, behavior: 'smooth' });
@@ -551,22 +545,24 @@ const PANEL_CSS = `
   right: 24px;
   bottom: 24px;
   z-index: 2147483647;
-  font-family: 'Avenir Next', 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
 
-  --surface:  rgba(255, 255, 255, 0.97);
-  --surface2: #f2f2f4;
-  --text:     #1b1b1f;
-  --muted:    #8a8b93;
-  --border:   rgba(0, 0, 0, 0.09);
+  /* "Paper" palette — same system as the popup. */
+  --surface:  rgba(250, 249, 245, 0.97);
+  --surface2: #F0EEE6;
+  --text:     #1D1C18;
+  --muted:    #8F8A7E;
+  --border:   rgba(0, 0, 0, 0.08);
   --accent:   #FF385C;
 }
 
 @media (prefers-color-scheme: dark) {
   :host {
-    --surface:  rgba(24, 25, 30, 0.96);
-    --surface2: #2c2d34;
-    --text:     #f2f2f5;
-    --border:   rgba(255, 255, 255, 0.1);
+    --surface:  rgba(32, 31, 28, 0.97);
+    --surface2: #2C2B26;
+    --text:     #ECE9E2;
+    --muted:    #97917F;
+    --border:   rgba(255, 255, 255, 0.09);
     --accent:   #FF5674;
   }
 }
@@ -696,23 +692,18 @@ const PANEL_CSS = `
   background-position: right 8px center;
 }
 
-.chips { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
-
-.chip {
-  border: none;
-  background: var(--surface2);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 5px 8px;
-  font-size: 10.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+/* Speed: a compact − 1.5× + stepper (7 preset chips were visual clutter). */
+.stepper { display: flex; align-items: center; gap: 2px; background: var(--surface2); border-radius: 999px; padding: 2px; }
+.stepper button {
+  width: 26px; height: 26px; border: none; border-radius: 999px; background: transparent;
+  color: var(--muted); font-size: 15px; line-height: 1; font-family: inherit; cursor: pointer;
 }
-
-.chip:hover { color: var(--text); }
-.chip.active { background: var(--accent); color: #fff; }
+.stepper button:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.stepper button:disabled { opacity: .3; cursor: default; }
+.stepper .val {
+  min-width: 44px; text-align: center; font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
 `;
 
 // ── Selection button CSS ───────────────────────────────────────────────────────
@@ -721,34 +712,26 @@ const SEL_CSS = `
 :host {
   position: fixed;
   z-index: 2147483646;
-  font-family: 'Avenir Next', 'SF Pro Text', -apple-system, 'Segoe UI', sans-serif;
+  font-family: -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+  --surface: #FAF9F5; --text: #1D1C18; --border: rgba(0,0,0,0.08); --soft: #F0EEE6; --accent: #FF385C;
 }
-.sel-btn {
-  background: white;
-  border: none;
-  border-radius: 20px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #FF385C;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15), 0 1px 4px rgba(0, 0, 0, 0.08);
-  white-space: nowrap;
-  transition: transform 0.1s, box-shadow 0.1s;
-  font-family: 'Avenir Next', 'SF Pro Text', -apple-system, 'Segoe UI', sans-serif;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.sel-btn:hover {
-  transform: scale(1.04);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-}
-.sel-btn svg { width: 13px; height: 13px; fill: #FF385C; }
 @media (prefers-color-scheme: dark) {
-  .sel-btn { background: #26272e; color: #ff6e82; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); }
-  .sel-btn svg { fill: #ff6e82; }
+  :host { --surface: #292823; --text: #ECE9E2; --border: rgba(255,255,255,0.1); --soft: #33312A; --accent: #FF5674; }
 }
+/* One quiet action: hear the selection read aloud. */
+.pill {
+  display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.07);
+}
+.pill button {
+  display: flex; align-items: center; gap: 6px; border: none; background: transparent;
+  color: var(--text); padding: 7px 13px; font-size: 12.5px; font-weight: 600;
+  font-family: inherit; cursor: pointer; white-space: nowrap; transition: background .12s;
+}
+.pill button:hover { background: var(--soft); }
+.pill button + button { border-left: 1px solid var(--border); }
+.pill svg { width: 12px; height: 12px; fill: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
@@ -756,7 +739,7 @@ const SEL_CSS = `
 
 let pendingSelText = '';
 
-const SEL_BTN_IDLE_HTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Play selection`;
+const SEL_PLAY_HTML = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Listen`;
 
 function showSelectionButton(text: string, x: number, y: number): void {
   pendingSelText = text;
@@ -770,43 +753,48 @@ function showSelectionButton(text: string, x: number, y: number): void {
     const style = document.createElement('style');
     style.textContent = SEL_CSS;
 
-    const btn = document.createElement('button');
-    btn.className = 'sel-btn';
-    btn.innerHTML = SEL_BTN_IDLE_HTML;
-    btn.addEventListener('click', (e) => {
+    const pill = document.createElement('div');
+    pill.className = 'pill';
+
+    const playBtn = document.createElement('button');
+    playBtn.id = 'spiel-sel-play';
+    playBtn.innerHTML = SEL_PLAY_HTML;
+    playBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!pendingSelText) return;
       log('Play selection clicked:', pendingSelText.slice(0, 60));
       // Show brief loading state before hiding
-      btn.innerHTML = `<svg viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg> Loading...`;
-      btn.style.opacity = '0.7';
-      btn.style.pointerEvents = 'none';
+      playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg> Loading…`;
+      pill.style.opacity = '0.7';
+      pill.style.pointerEvents = 'none';
       chrome.runtime.sendMessage({ type: 'PLAY_SELECTION', text: pendingSelText });
       // Hide after short delay so user sees feedback
       setTimeout(hideSelectionButton, 800);
     });
 
+    pill.appendChild(playBtn);
     selBtnShadow.appendChild(style);
-    selBtnShadow.appendChild(btn);
+    selBtnShadow.appendChild(pill);
   }
 
-  // The button is REUSED across selections — reset it, or the "Loading…" state from a
+  // The pill is REUSED across selections — reset it, or the "Loading…" state from a
   // previous click sticks forever (dead spinner on every selection after the first).
-  const existingBtn = selBtnShadow!.querySelector('.sel-btn') as HTMLButtonElement | null;
-  if (existingBtn) {
-    existingBtn.innerHTML = SEL_BTN_IDLE_HTML;
-    existingBtn.style.opacity = '';
-    existingBtn.style.pointerEvents = '';
+  const pill = selBtnShadow!.querySelector('.pill') as HTMLElement | null;
+  const playBtn = selBtnShadow!.querySelector('#spiel-sel-play') as HTMLButtonElement | null;
+  if (pill && playBtn) {
+    playBtn.innerHTML = SEL_PLAY_HTML;
+    pill.style.opacity = '';
+    pill.style.pointerEvents = '';
   }
 
   const vw = window.innerWidth;
-  const W = 160;
+  const W = 120;
   const left = Math.min(Math.max(x - W / 2, 8), vw - W - 8);
   const top  = Math.max(y - 52, 8);
 
   selBtnHost.style.cssText = `position:fixed;left:${left}px;top:${top}px;display:block;`;
   if (selHideTimer) clearTimeout(selHideTimer);
-  selHideTimer = setTimeout(hideSelectionButton, 8000);
+  selHideTimer = setTimeout(hideSelectionButton, 15000);
 }
 
 function hideSelectionButton(): void {
@@ -819,7 +807,7 @@ function hideSelectionButton(): void {
 
 const fmtSpeed = (s: number) => `${parseFloat(s.toFixed(2))}×`;
 
-// Exactly 4 curated voices, named like people (DESIGN.md). The name is the Kokoro
+// Exactly 4 curated voices, named like people (docs/DESIGN.md). The name is the Kokoro
 // voice's own suffix so logs stay traceable; the raw ID is never shown.
 const VOICES: Array<{ id: string; label: string }> = [
   { id: 'af_heart',   label: 'Heart — American female · warm' },
@@ -850,19 +838,39 @@ function buildVoiceSelect(select: HTMLSelectElement, selected: string): void {
   select.value = selected;
 }
 
-function buildSpeedChips(container: HTMLElement, current: number, onPick: (s: number) => void): void {
+// Compact − 1.5× + stepper over the same presets the chips used. `container` gets a
+// `spielSet(speed)` hook so external updates (popup/panel sync) can move the display.
+function buildSpeedStepper(container: HTMLElement, current: number, onPick: (s: number) => void): void {
   container.innerHTML = '';
-  for (const sp of SPEED_PRESETS) {
-    const b = document.createElement('button');
-    b.className = 'chip' + (Math.abs(sp - current) < 0.01 ? ' active' : '');
-    b.textContent = fmtSpeed(sp);
-    b.addEventListener('click', () => {
-      container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      b.classList.add('active');
-      onPick(sp);
-    });
-    container.appendChild(b);
-  }
+  let idx = SPEED_PRESETS.reduce((best, sp, i) =>
+    Math.abs(sp - current) < Math.abs(SPEED_PRESETS[best] - current) ? i : best, 0);
+
+  const minus = document.createElement('button');
+  minus.textContent = '−';
+  const val = document.createElement('span');
+  val.className = 'val';
+  const plus = document.createElement('button');
+  plus.textContent = '+';
+
+  const render = () => {
+    val.textContent = fmtSpeed(SPEED_PRESETS[idx]);
+    minus.disabled = idx === 0;
+    plus.disabled = idx === SPEED_PRESETS.length - 1;
+  };
+  const step = (d: number) => {
+    idx = Math.min(SPEED_PRESETS.length - 1, Math.max(0, idx + d));
+    render();
+    onPick(SPEED_PRESETS[idx]);
+  };
+  minus.addEventListener('click', () => step(-1));
+  plus.addEventListener('click', () => step(1));
+  (container as any).spielSet = (sp: number) => {
+    idx = SPEED_PRESETS.reduce((best, s, i) =>
+      Math.abs(s - sp) < Math.abs(SPEED_PRESETS[best] - sp) ? i : best, 0);
+    render();
+  };
+  render();
+  container.append(minus, val, plus);
 }
 
 function createPanel(title: string, voice: string, speed: number, isSelection: boolean): void {
@@ -880,7 +888,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   const panel = document.createElement('div');
   panel.id = 'spiel-panel';
   panel.className = 'player';
-  // Selection playback carries its own display title ("Selection" or "Summary").
+  // Selection playback carries its own display title ("Selection").
   panel.title = isSelection ? `Spiel — reading ${(title || 'selection').toLowerCase()}` : `Spiel — ${title}`;
   panel.innerHTML = `
     <div class="progress"><div class="progress-fill" id="spiel-progress"></div></div>
@@ -908,7 +916,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
       </div>
       <div class="set-row">
         <span class="set-label">Speed</span>
-        <div class="chips" id="spiel-speeds"></div>
+        <div class="stepper" id="spiel-speeds"></div>
       </div>
     </div>
   `;
@@ -918,7 +926,7 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
 
   const voiceSel = panelShadow.getElementById('spiel-voice') as HTMLSelectElement;
   buildVoiceSelect(voiceSel, voice);
-  buildSpeedChips(panelShadow.getElementById('spiel-speeds') as HTMLElement, speed, (sp) => {
+  buildSpeedStepper(panelShadow.getElementById('spiel-speeds') as HTMLElement, speed, (sp) => {
     curSpeed = sp;
     chrome.runtime.sendMessage({ type: 'UPDATE_SETTINGS', speed: sp });
     chrome.storage.sync.set({ speed: sp });
@@ -1079,15 +1087,13 @@ function updatePanel(sentence: string, index: number, total: number, timestamps?
   if (pp)   { pp.innerHTML = PAUSE_ICON; (pp as HTMLElement).title = 'Pause'; }
   isPaused = false;
 
-  // Karaoke stage, in priority order: the page itself (article highlight landed →
-  // caption would be a duplicate), the summary modal, else the caption (PDFs,
-  // selections, and sentences the page matcher can't find — the E8 fallback).
+  // Karaoke stage: the page itself when the article highlight landed (a caption would
+  // duplicate it), else the caption (PDFs, selections, and sentences the page matcher
+  // can't find — the E8 fallback).
   const cap = panelShadow.getElementById('spiel-caption') as HTMLElement | null;
   if (pageMatched) {
     if (cap) cap.textContent = '';
     panelWords = []; panelActiveWord = -1;
-  } else if (isSelectionMode && focusSummarySentence(index)) {
-    if (cap) cap.textContent = ''; // modal is the stage; don't duplicate below it
   } else {
     renderPanelSentence(sentence);
   }
@@ -1115,161 +1121,6 @@ function removePanel(): void {
   panelActiveWord = -1;
   isSelectionMode = false;
   setArticleSentences([]);
-}
-
-// ── Summary modal ──────────────────────────────────────────────────────────────
-
-const SUMMARY_CSS = `
-:host { position: fixed; inset: 0; z-index: 2147483647;
-  font-family: 'Avenir Next', 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --surface: #ffffff; --text: #1b1b1f; --muted: #8a8b93; --border: rgba(0,0,0,0.09);
-  --accent: #FF385C; --scrim: rgba(250, 247, 246, 0.55); --read: rgba(255, 56, 92, 0.10);
-}
-@media (prefers-color-scheme: dark) {
-  :host { --surface: #1d1a1d; --text: #f2f2f5; --muted: #9c938e; --border: rgba(255,255,255,0.1);
-          --accent: #FF5674; --scrim: rgba(12, 10, 12, 0.6); --read: rgba(255, 86, 116, 0.14); }
-}
-.scrim { position: absolute; inset: 0; background: var(--scrim);
-  backdrop-filter: blur(7px) saturate(120%); -webkit-backdrop-filter: blur(7px) saturate(120%);
-  animation: fade .18s ease; }
-@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
-.card { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(660px, calc(100vw - 48px)); max-height: min(78vh, 820px);
-  display: flex; flex-direction: column; background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); border-radius: 20px;
-  box-shadow: 0 24px 80px rgba(0,0,0,.3), 0 2px 8px rgba(0,0,0,.12);
-  animation: pop .22s cubic-bezier(.2,.9,.3,1.2); overflow: hidden; }
-@keyframes pop { from { opacity: 0; transform: translate(-50%, -47%) scale(.97) } to { opacity: 1; transform: translate(-50%, -50%) scale(1) } }
-.head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
-.mark { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); flex-shrink: 0;
-  display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; padding: 8px 7px; }
-.mark i { width: 3.5px; border-radius: 2px; background: #fff; display: block; }
-.mark i:nth-child(1){height:36%} .mark i:nth-child(2){height:65%} .mark i:nth-child(3){height:100%}
-.mark i:nth-child(4){height:65%} .mark i:nth-child(5){height:36%}
-.titles { min-width: 0; }
-.kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
-.title { font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.x { margin-left: auto; width: 32px; height: 32px; border: none; border-radius: 999px; background: transparent;
-  color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; flex-shrink: 0; }
-.x:hover { background: var(--read); color: var(--text); }
-.body { padding: 20px 24px 12px; overflow-y: auto; font-size: 16.5px; line-height: 1.78;
-  letter-spacing: .003em; scrollbar-width: thin; }
-.body .flow { margin: 0; }
-.body .s { border-radius: 6px; padding: 1px 3px; transition: background .2s ease;
-  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
-.body .s.active { background: var(--read); }
-.body .w { border-radius: 4px; padding: 0 1px; }
-.body .w.active { background: var(--accent); color: #fff; }
-.foot { display: flex; align-items: center; gap: 14px; padding: 14px 20px 18px; border-top: 1px solid var(--border); }
-.listen { display: inline-flex; align-items: center; gap: 9px; background: var(--accent); color: #fff;
-  border: none; border-radius: 12px; padding: 12px 22px; font-size: 15px; font-weight: 650;
-  font-family: inherit; cursor: pointer; transition: filter .15s, transform .05s; }
-.listen:hover { filter: brightness(.93); } .listen:active { transform: translateY(1px); }
-.listen svg { width: 16px; height: 16px; fill: currentColor; }
-.hint { font-size: 12.5px; color: var(--muted); }
-`;
-
-function removeSummaryModal(): void {
-  summaryAbort?.abort(); summaryAbort = null;
-  summaryHost?.remove(); summaryHost = null; summaryShadow = null;
-  summarySentSpans = []; summaryActiveSent = -1;
-  // If the karaoke was pointed at modal spans, detach; the caption re-renders next sentence.
-  panelWords = []; panelActiveWord = -1;
-  // If the player was docked beneath the modal, send it back to its home corner.
-  if (panelHost) panelHost.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;';
-}
-
-function createSummaryModal(title: string, summary: string): void {
-  removeSummaryModal();
-  const sentences = splitIntoSentences(summary); // same splitter as playback → indices align
-
-  summaryHost = document.createElement('div');
-  summaryHost.id = 'spiel-summary-host';
-  document.body.appendChild(summaryHost);
-  summaryShadow = summaryHost.attachShadow({ mode: 'open' });
-
-  const style = document.createElement('style');
-  style.textContent = SUMMARY_CSS;
-  summaryShadow.appendChild(style);
-
-  const scrim = document.createElement('div');
-  scrim.className = 'scrim';
-  const card = document.createElement('div');
-  card.className = 'card';
-  card.innerHTML = `
-    <div class="head">
-      <div class="mark"><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="titles"><div class="kicker">Summary</div><div class="title"></div></div>
-      <button class="x" title="Close">✕</button>
-    </div>
-    <div class="body" id="spiel-sum-body"></div>
-    <div class="foot">
-      <button class="listen" id="spiel-sum-listen">
-        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Listen
-      </button>
-      <span class="hint">Words highlight as it reads · Esc to close</span>
-    </div>`;
-  (card.querySelector('.title') as HTMLElement).textContent = title || document.title || '';
-
-  // One flowing paragraph; each playback sentence is an inline span. (The splitter cuts
-  // the first sentence's opening clause for TTS latency — rendering per-sentence <p>s
-  // exposed that as a broken paragraph. Inline spans read as natural prose and keep the
-  // sentence indices aligned with playback.)
-  const body = card.querySelector('#spiel-sum-body') as HTMLElement;
-  const flow = document.createElement('p');
-  flow.className = 'flow';
-  summarySentSpans = sentences.map((s, i) => {
-    const sent = document.createElement('span');
-    sent.className = 's';
-    const spans: HTMLElement[] = [];
-    for (const part of s.split(/(\s+)/)) {
-      if (!part) continue;
-      if (/^\s+$/.test(part)) { sent.appendChild(document.createTextNode(' ')); continue; }
-      const w = document.createElement('span');
-      w.className = 'w'; w.textContent = part;
-      sent.appendChild(w); spans.push(w);
-    }
-    flow.appendChild(sent);
-    if (i < sentences.length - 1) flow.appendChild(document.createTextNode(' '));
-    return spans;
-  });
-  body.appendChild(flow);
-
-  summaryShadow.appendChild(scrim);
-  summaryShadow.appendChild(card);
-
-  summaryAbort = new AbortController();
-  const sig = summaryAbort.signal;
-  (card.querySelector('.x') as HTMLElement).addEventListener('click', removeSummaryModal, { signal: sig });
-  scrim.addEventListener('click', removeSummaryModal, { signal: sig });
-  document.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { e.stopPropagation(); removeSummaryModal(); }
-  }, { signal: sig, capture: true });
-
-  const listen = card.querySelector('#spiel-sum-listen') as HTMLButtonElement;
-  listen.addEventListener('click', () => {
-    if (!extensionAlive()) return;
-    chrome.runtime.sendMessage({ type: 'PLAY_SUMMARY', text: summary });
-  }, { signal: sig });
-
-  log('Summary modal shown:', sentences.length, 'sentences');
-}
-
-// Point the karaoke at the modal's sentence `index`. Returns false if the modal
-// isn't showing (caller falls back to the floating-player caption).
-function focusSummarySentence(index: number): boolean {
-  if (!summaryShadow || !summarySentSpans.length) return false;
-  const spans = summarySentSpans[index];
-  if (!spans) return false;
-  if (summaryActiveSent >= 0) summarySentSpans[summaryActiveSent]?.[0]?.parentElement?.classList.remove('active');
-  const p = spans[0]?.parentElement;
-  p?.classList.add('active');
-  p?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  if (panelActiveWord >= 0 && panelWords[panelActiveWord]) panelWords[panelActiveWord].classList.remove('active');
-  panelWords = spans;
-  panelActiveWord = -1;
-  summaryActiveSent = index;
-  return true;
 }
 
 // ── Selection detection ────────────────────────────────────────────────────────
@@ -1332,20 +1183,6 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       buildWordIndex();
       buildSentenceRuns();
     }
-    // Summary playback with the modal open: ONE consistent control surface — the
-    // floating player docks centered beneath the card and the modal's own Listen row
-    // hides (it would duplicate the player). Restored on stop/close.
-    if (isSelectionMode && summaryShadow && panelHost) {
-      panelHost.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:2147483647;';
-      const foot = summaryShadow.querySelector('.foot') as HTMLElement | null;
-      if (foot) foot.style.display = 'none';
-    }
-    sendResponse({ ok: true });
-    return false;
-  }
-
-  if (message.type === 'SHOW_SUMMARY') {
-    createSummaryModal(message.title || '', message.summary || '');
     sendResponse({ ok: true });
     return false;
   }
@@ -1353,24 +1190,17 @@ chrome.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
   if (message.type === 'HIDE_PLAYER') {
     removePanel();
     hideSelectionButton();
-    // Reading ended — bring the modal's Listen row back for a replay.
-    const foot = summaryShadow?.querySelector('.foot') as HTMLElement | null;
-    if (foot) foot.style.display = '';
     sendResponse({ ok: true });
     return false;
   }
 
   if (message.type === 'UPDATE_PANEL') {
     log('UPDATE_PANEL sentence:', message.index, '/', message.total);
-    // Speed may have been changed from the popup — keep panel chips + time-left in sync.
+    // Speed may have been changed elsewhere — keep the stepper + time-left in sync.
     if (typeof message.speed === 'number' && Math.abs(message.speed - curSpeed) > 0.001) {
       curSpeed = message.speed;
-      const chips = panelShadow?.getElementById('spiel-speeds');
-      if (chips) {
-        chips.querySelectorAll('.chip').forEach(c => {
-          c.classList.toggle('active', Math.abs(parseFloat(c.textContent || '0') - curSpeed) < 0.01);
-        });
-      }
+      const stepper = panelShadow?.getElementById('spiel-speeds') as any;
+      stepper?.spielSet?.(curSpeed);
     }
     // Page highlight FIRST — if it lands, the caption is redundant (the page is the
     // stage) and updatePanel hides it. Caption remains the stage for PDFs, selections,

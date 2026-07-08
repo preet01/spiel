@@ -1,4 +1,7 @@
 <!DOCTYPE html>
+<!-- Spiel popup markup — the toolbar-click UI shell: the Listen action plus setup and
+     error states. All behavior in popup.js; styling in popup.css. Copied to
+     dist/popup/ verbatim by the build. -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -9,122 +12,47 @@
 <body>
   <div class="popup">
 
-    <!-- Header -->
     <div class="header">
       <div class="brand">
-        <svg class="brand-icon" viewBox="0 0 24 24" fill="#FF385C">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-        </svg>
+        <div class="mark"><i></i><i></i><i></i><i></i><i></i></div>
         Spiel
       </div>
-      <div class="server-status" id="server-status">
-        <span class="status-dot" id="status-dot"></span>
-        <span class="status-label" id="status-label">Checking…</span>
-      </div>
     </div>
 
-    <!-- Idle card -->
-    <div class="idle-card" id="card-idle">
-      <svg class="idle-icon" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-      </svg>
-      <p class="status-hint">Open any article, then click <strong>Play</strong>. Or select any text on the page for instant reading.</p>
-    </div>
+    <!-- One line of orientation; swaps to a "reading" note during playback -->
+    <p class="hint" id="hint">Open an article or PDF and press Listen.</p>
 
-    <!-- (No playing card: while reading, the floating in-page player is the single
-         source of progress/preview — duplicating it here confused users.) -->
-
-    <!-- Setup card: voice engine not installed yet -->
-    <div class="setup-card hidden" id="card-setup">
-      <p class="setup-title">One more step — install the voice</p>
-      <p class="setup-desc">Spiel's AI voice runs 100% on your Mac — private and free. Paste this in the <strong>Terminal</strong> app:</p>
-      <div class="setup-cmd" id="setup-cmd" title="Click to copy">
-        <code id="setup-cmd-text">curl -fsSL https://raw.githubusercontent.com/preet01/spiel/main/install.sh | bash</code>
-      </div>
-      <button class="btn btn-primary btn-full" id="btn-copy-cmd">Copy command</button>
-      <p class="setup-hint">Takes ~2 minutes. This screen updates by itself when the voice is ready. <a href="https://github.com/preet01/spiel#install" target="_blank" rel="noopener">Need help?</a></p>
-    </div>
-
-    <!-- Error card -->
-    <div class="error-card hidden" id="card-error">
-      <svg class="error-icon" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-      </svg>
-      <p class="error-msg" id="error-msg">Something went wrong.</p>
-    </div>
-
-    <!-- Settings -->
-    <div class="settings-section">
-      <div class="setting-row">
-        <label class="setting-label" for="voice-select">Voice</label>
-        <select class="voice-select" id="voice-select">
-          <option value="af_heart">Heart — American female · warm</option>
-          <option value="af_bella">Bella — American female · expressive</option>
-          <option value="am_michael">Michael — American male · deep</option>
-          <option value="bf_emma">Emma — British female · calm</option>
-        </select>
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Speed</span>
-        <div class="chips" id="speed-chips"></div>
-      </div>
-      <!-- (Skip toggles removed: URLs, [refs] and (parens) are always skipped —
-           the per-toggle control was more nuance than anyone needed.) -->
-    </div>
-
-    <!-- Controls: Idle -->
-    <div class="controls" id="controls-idle">
-      <button class="btn btn-primary btn-full" id="btn-play">
+    <!-- Primary action -->
+    <div class="actions" id="actions">
+      <button class="btn primary" id="btn-play">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        Play This Page
+        Listen
       </button>
     </div>
 
-    <!-- Summarize lives OUTSIDE the idle controls: it must stay available while
-         reading too (summaries are cached — re-opening one is instant). -->
-    <div class="controls" id="summarize-zone">
-      <button class="btn btn-outline btn-full" id="btn-summarize" title="Summarize this page on-device and show it — press Listen there to hear it">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h7v2H4z"/></svg>
-        Summarize This Page
-      </button>
-      <!-- Summarize progress: hidden unless a summarize run is active -->
-      <div class="sum-status hidden" id="sum-status">
-        <div class="sum-bar" id="sum-bar"><div class="sum-bar-fill" id="sum-bar-fill"></div></div>
-        <span class="sum-label" id="sum-label">Checking on-device AI…</span>
-      </div>
-    </div>
-
-    <!-- Controls: Playing -->
-    <div class="controls hidden" id="controls-playing">
-      <div class="control-row">
-        <button class="btn btn-icon" id="btn-prev" title="Previous sentence">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
-        </button>
-        <button class="btn btn-primary btn-wide" id="btn-pause">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-          Pause
-        </button>
-        <button class="btn btn-icon" id="btn-next" title="Next sentence">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
-        </button>
-      </div>
-      <button class="btn btn-ghost btn-full" id="btn-stop">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
-        Stop
-      </button>
-    </div>
-
-    <!-- Controls: Loading -->
-    <div class="controls hidden" id="controls-loading">
-      <button class="btn btn-primary btn-full btn-loading" disabled>
-        <span class="spinner"></span>
+    <!-- Transient: between clicking Listen and the popup auto-closing -->
+    <div class="actions hidden" id="controls-loading">
+      <button class="btn primary" disabled>
+        <span class="dots"><i></i><i></i><i></i></span>
         Generating audio…
       </button>
     </div>
 
-    <!-- Footer -->
-    <div class="footer">
-      Listen to anything. Instantly.
+    <!-- Setup card: voice engine not installed yet -->
+    <div class="card hidden" id="card-setup">
+      <p class="card-title">Install the voice to listen</p>
+      <p class="card-desc">Spiel's voice runs 100% on your Mac — private and free. Paste this in <strong>Terminal</strong>:</p>
+      <div class="cmd" id="setup-cmd" title="Click to copy">
+        <code id="setup-cmd-text">curl -fsSL https://raw.githubusercontent.com/preet01/spiel/main/install.sh | bash</code>
+      </div>
+      <button class="btn secondary small" id="btn-copy-cmd">Copy command</button>
+      <p class="card-hint">~2 minutes. This screen updates itself when the voice is ready. <a href="https://github.com/preet01/spiel#install" target="_blank" rel="noopener">Help</a></p>
+    </div>
+
+    <!-- Error card -->
+    <div class="card hidden" id="card-error">
+      <p class="card-title">Something went wrong</p>
+      <p class="card-desc" id="error-msg"></p>
     </div>
 
   </div>

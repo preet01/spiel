@@ -167,6 +167,6 @@ npm run package    # dist/ → spiel-extension.zip
 
 ## License & credits
 
-[MIT](LICENSE) © Harpreet Vishnoi. Built on excellent open-source work — see [THIRD_PARTY.md](THIRD_PARTY.md) for full credits (Kokoro model & Kokoro-FastAPI, Apache-2.0; Mozilla Readability, Apache-2.0; pdf.js, Apache-2.0; and the CC BY voice datasets behind Kokoro).
+[MIT](LICENSE) © Harpreet Vishnoi. Built on excellent open-source work — see [THIRD_PARTY.md](docs/THIRD_PARTY.md) for full credits (Kokoro model & Kokoro-FastAPI, Apache-2.0; Mozilla Readability, Apache-2.0; pdf.js, Apache-2.0; and the CC BY voice datasets behind Kokoro).
 
 \* *Spiel is not affiliated with, endorsed by, or connected to Speechify Inc. in any way.*

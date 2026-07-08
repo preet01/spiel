@@ -1,3 +1,6 @@
+// Shared type contracts — the message vocabulary between popup, background, content
+// script, and offscreen document, plus the PlaybackState shape the background owns.
+// Change a message here and grep for its string literal in every context.
 export type MessageType =
   | 'PLAY' | 'PAUSE' | 'RESUME' | 'STOP'
   | 'SKIP_NEXT' | 'SKIP_PREV'

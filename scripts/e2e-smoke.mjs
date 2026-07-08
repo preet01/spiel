@@ -1,10 +1,7 @@
 // Spiel e2e smoke test — launches a real Chrome with dist/ loaded and verifies the
-// core flows WITHOUT a human: content script injection, article extraction (the
-// popup's direct path), the full TTS playback pipeline against the local engine,
-// and zero uncaught extension errors. Run: node scripts/e2e-smoke.mjs
-//
-// Uses a scratch profile: the on-device Summarizer model isn't present there, so
-// summarization is only availability-probed, not executed.
+// core flows WITHOUT a human: content script injection, article extraction, the full
+// TTS playback pipeline against the local engine, and zero uncaught extension errors.
+// Run: node scripts/e2e-smoke.mjs
 import { chromium } from 'playwright';
 import http from 'http';
 import path from 'path';
@@ -71,20 +68,15 @@ try {
   }, articleTab.id);
   ping?.ok ? ok('content script responds to PING') : bad('content script PING', JSON.stringify(ping));
 
-  // 3. THE PATH THAT FAILED FOR THE USER: popup's direct extraction
-  const extract = await popup.evaluate(async (tab) => {
-    try { return await popupExtractArticle(tab); } catch (e) { return { error: 'threw: ' + String(e) }; }
-  }, articleTab);
-  if (extract?.ok && extract.sentences?.length >= 5 && !/\w\.\w/.test(extract.sentences[1] || ''))
-    ok('popupExtractArticle', `${extract.sentences.length} sentences, title "${extract.title}"`);
-  else bad('popupExtractArticle', JSON.stringify(extract).slice(0, 200));
-
-  // 4. Summarizer API surface (model won't be in this scratch profile — probe only)
-  const sum = await popup.evaluate(async () => {
-    if (!('Summarizer' in self)) return 'API absent';
-    try { return String(await Summarizer.availability()); } catch (e) { return 'availability threw: ' + String(e); }
-  });
-  ok('Summarizer availability probe', sum);
+  // 3. Article extraction via the content script (the same path Play uses; sentence 1
+  // must not contain glued tokens like "network.Example" — the E8 regression guard).
+  const extract = await popup.evaluate(async (tabId) => {
+    try { return await chrome.tabs.sendMessage(tabId, { type: 'GET_ARTICLE' }); }
+    catch (e) { return { error: 'threw: ' + String(e) }; }
+  }, articleTab.id);
+  if (extract?.sentences?.length >= 5 && !/\w\.\w/.test(extract.sentences[1] || ''))
+    ok('article extraction', `${extract.sentences.length} sentences, title "${extract.title}"`);
+  else bad('article extraction', JSON.stringify(extract).slice(0, 200));
 
   // 5. Full audio pipeline vs the LIVE local engine (fetch → offscreen → playing)
   const engineUp = await popup.evaluate(async () => {
@@ -108,45 +100,6 @@ try {
     (status === 'playing' || status === 'done')
       ? ok('audio pipeline (fetch→offscreen→play)', `status: ${status}`)
       : bad('audio pipeline', `status: ${status}`);
-    await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'STOP' })).catch(() => {});
-  }
-
-  // 6. Summary modal: SHOW_SUMMARY renders in-page, Listen starts playback
-  const SUM_TEXT = 'This is the automated summary. It has three sentences for the karaoke. The modal must highlight them.';
-  await popup.evaluate(async ({ tabId, text }) => {
-    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_SUMMARY', title: 'E2E', summary: text });
-  }, { tabId: articleTab.id, text: SUM_TEXT });
-  await article.waitForTimeout(400);
-  const modal = await article.evaluate(() => {
-    const host = document.getElementById('spiel-summary-host');
-    const sh = host?.shadowRoot;
-    return {
-      exists: !!host,
-      sentences: sh ? sh.querySelectorAll('.body .s').length : 0,
-      words: sh ? sh.querySelectorAll('.body .w').length : 0,
-      hasListen: !!sh?.getElementById('spiel-sum-listen'),
-    };
-  });
-  (modal.exists && modal.sentences === 3 && modal.hasListen)
-    ? ok('summary modal renders', `${modal.sentences} sentences, ${modal.words} word spans`)
-    : bad('summary modal', JSON.stringify(modal));
-
-  if (engineUp && modal.hasListen) {
-    await article.evaluate(() => {
-      (document.getElementById('spiel-summary-host').shadowRoot.getElementById('spiel-sum-listen')).click();
-    });
-    let status = 'unknown', activeSent = 0;
-    for (let i = 0; i < 30; i++) {
-      await popup.waitForTimeout(500);
-      const st = await popup.evaluate(async () => (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }))?.state);
-      status = st?.status || 'no-state';
-      activeSent = await article.evaluate(() =>
-        document.getElementById('spiel-summary-host')?.shadowRoot?.querySelectorAll('.body .s.active').length ?? 0);
-      if ((status === 'playing' && activeSent > 0) || status === 'done' || status === 'error') break;
-    }
-    (status === 'playing' || status === 'done') && activeSent > 0
-      ? ok('modal Listen → playback + karaoke on modal', `status ${status}, active sentence highlighted`)
-      : bad('modal Listen flow', `status ${status}, activeSent ${activeSent}`);
     await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'STOP' })).catch(() => {});
   }
 

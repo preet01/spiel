@@ -1,3 +1,7 @@
+// Spiel background service worker — the extension's brain. Owns playback state and the
+// sentence queue, fetches TTS audio from the local Kokoro engine (127.0.0.1:8880), and
+// orchestrates the offscreen audio document, content-script panels, and PDF extraction.
+// NO DOM, NO Worker, NO AudioContext here — service workers don't have them (CLAUDE.md).
 import { PlaybackState } from './shared/types';
 import { splitIntoSentences } from './shared/sentences';
 
@@ -708,17 +712,8 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
       sendResponse({ ok: true });
       return false;
 
-    case 'PLAY_SUMMARY':
-      // Summary text produced on-device by the popup (Chrome built-in Summarizer).
-      // Plays through the selection path: floating player + caption karaoke, titled "Summary".
-      lastInteraction = Date.now();
-      startPlayback(message.voice || state.voice, message.speed ?? state.speed, message.text, 'Summary');
-      sendResponse({ ok: true });
-      return false;
-
-    // NOTE: Summarize's extraction happens entirely in the popup (popupExtractArticle) —
-    // a background relay handler here kept dropping its async response after the nested
-    // tab-message hop (MV3 flakiness, E9). Don't reintroduce a relay for it.
+    // NOTE: never relay popup↔content-script requests through here — holding a
+    // sendResponse open across a nested tab-message hop drops the reply (MV3, E9).
 
     case 'PAUSE':
       lastInteraction = Date.now();

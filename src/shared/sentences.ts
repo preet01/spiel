@@ -1,3 +1,7 @@
+// Sentence splitter shared by every context (background queues TTS per sentence; the
+// content script aligns highlights per sentence — indices MUST match, so both import
+// THIS file). Handles abbreviations, decimals, quotes-after-periods (E12), and glued
+// block boundaries (E8); bounded output (≤350 chars/sentence) keeps TTS latency sane.
 const ABBREVIATIONS = [
   'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'Sr', 'Jr', 'vs', 'etc', 'al',
   'Fig', 'fig', 'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug',
