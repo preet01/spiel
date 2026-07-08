@@ -316,9 +316,19 @@ btnSummarize.addEventListener('click', async () => {
       },
     });
 
-    const page = await chrome.runtime.sendMessage({ type: 'GET_ARTICLE_TEXT' });
+    // Mark the create() promise handled so an early rejection (e.g. NotAllowedError)
+    // can't fire an unhandled-rejection while we're still reading the page —
+    // the real handling happens at the `await summarizerPromise` below.
+    summarizerPromise.catch(() => {});
+
+    // Resolve the tab HERE: the popup's window context is unambiguous, while the
+    // background service worker's `currentWindow` can misresolve.
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const page = await chrome.runtime.sendMessage({
+      type: 'GET_ARTICLE_TEXT', tabId: tab?.id, url: tab?.url || '', tabTitle: tab?.title,
+    });
     if (signal.aborted) throw { name: 'AbortError' };
-    if (!page?.ok) throw { ui: page?.error || 'Could not read this page.' };
+    if (!page?.ok) throw { ui: page?.error || 'Could not read this page (no response from the reader).' };
     if ((page.text?.split(/\s+/).length ?? 0) < 60) {
       throw { ui: 'Not enough text on this page to summarize.' };
     }

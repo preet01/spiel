@@ -33,6 +33,12 @@ export function splitIntoSentences(text: string): string[] {
   // Protect decimal numbers like 3.14
   t = t.replace(/(\d)\.(\d)/g, '$1__DEC__$2');
 
+  // De-glue block boundaries that arrived with no whitespace ("network.Example:One") —
+  // seen when extraction concatenates block elements. Runs AFTER the protections above,
+  // so abbreviations/decimals/initials are exempt. Without the space, the split below
+  // can't fire and the glued token breaks page-highlight matching too (E8).
+  t = t.replace(/([.!?])(["'""»)\]]?)([A-Z0-9À-Ý])/g, '$1$2 $3');
+
   // Split on sentence-ending punctuation followed by whitespace + an uppercase/quote/digit start.
   const parts = t.split(/(?<=[.!?])\s+(?=[A-Z"'""""À-ɏ0-9])/);
 

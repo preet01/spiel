@@ -103,6 +103,24 @@
 - Tab close / navigation stops playback; SW-restart state persistence with offscreen-reclaim detection.
 - Hardening added: `fetchClip` 90s watchdog (hang → error card, never infinite silence); empty-selection guard (no panel flash).
 
+### E7 — Rapid Next: sentence generated TWICE, stacking seconds of silence
+- **Symptom:** pressing Next 3–4× quickly → long dead silence; felt like "the voice is lost."
+- **Root cause:** on skip, a prefetch of the target sentence was usually already **in flight** on the single-worker engine. `playNextSentence` checked the cache **before** entering the TTS queue, missed, waited behind that very prefetch — then **generated the same sentence again**. Every rapid skip doubled its own latency; skips stacked.
+- **Mistake class:** **Stale precondition across a queue wait.** A check done before enqueueing was acted on after the queue ran; the world (cache) had changed.
+- **Fix:** re-check the cache **inside** the queued job (prefetch already did this — playback didn't).
+- **Rule:** any single-flight/queued job must re-validate its preconditions (cache, generation, index) at **execution** time, not submission time. Same family as E6 (post-await re-check).
+
+### E8 — Highlight randomly stopped for stretches: block-boundary text glue
+- **Symptom:** page highlight worked, then silently stopped for certain paragraphs, then resumed. Caption showed the tell: `…of a network.Example:One layer in…`.
+- **Root cause:** extraction used `Readability.textContent` / `element.textContent`, which concatenates block elements (`</p><p>`, `<li>`) with **no separator**. The splitter can't split `network.Example` (needs whitespace after the period) → mega-sentence with glued tokens like `network.Example:One` that match **nothing** in the page word index → whole stretch un-highlightable until the next clean sentence.
+- **Mistake class:** **Trusting `textContent` for prose.** DOM text extraction must be block-aware; this is a well-known pitfall (innerText vs textContent).
+- **Fix:** derive text from Readability's HTML with breaks injected at block boundaries (`htmlToText`); site-selector path switched to `innerText` (rendered elements only); splitter got a de-glue safety net (`.X` → `. X` after abbreviation/decimal protections) for PDF/selection sources.
+- **Rule:** never feed `textContent` of multi-block containers into NLP/matching; go through a block-aware conversion, and give downstream parsers a tolerance for glue anyway.
+
+### Also fixed in the same pass (smaller lessons)
+- **Double-click read-from-here silently ate the jump:** dblclick selects a word → the "respect active selections" guard rejected it. Intent detection must distinguish a selection the user *made* from one their gesture *side-effected* (`dblclick` handler bypasses the guard and clears its own selection).
+- **"Could not read this page" on Summarize was unactionable:** four failure legs shared one error string, and the tab was resolved in the SW (`currentWindow` can misresolve there). Tab now resolved in the popup and every failure leg has a distinct message. **Rule:** distinct failures get distinct user-visible strings — a screenshot should pinpoint the leg.
+
 ---
 
 ## ✅ Software-quality checklist (cross-reference before every release)

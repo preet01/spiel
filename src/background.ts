@@ -363,6 +363,13 @@ async function playNextSentence(): Promise<void> {
       const tf = Date.now();
       const fetched = await queueTts(() => {
         if (myGen !== generation || index !== state.currentIndex) return Promise.resolve(null);
+        // Re-check the cache AFTER the queue wait: on skip, a prefetch of this exact
+        // sentence is often already in flight — by the time our turn comes it has
+        // landed in the cache. Without this we generated the sentence a SECOND time,
+        // doubling the silent gap; rapid Next stacked these into seconds of dead air
+        // that read as "the voice is gone" (E7).
+        const cached = audioCache.get(key);
+        if (cached) return Promise.resolve(cached);
         return fetchClip(sentence, state.voice, state.speed);
       });
       if (!fetched) { log('Queued fetch skipped (superseded)'); return; }
@@ -672,22 +679,34 @@ function handleMessage(message: any, _sender: any, sendResponse: (r?: any) => vo
 
     case 'GET_ARTICLE_TEXT':
       // Popup requests the page's text for on-device summarization (articles AND PDFs).
+      // The popup resolves the target tab itself (its window context is unambiguous);
+      // the background query is only a fallback. Every failure leg reports a distinct
+      // message so a user screenshot pinpoints the leg (learned from a vague
+      // "Could not read this page." that could have been any of four failures).
       lastInteraction = Date.now();
       (async () => {
         try {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (!tab?.id) { sendResponse({ ok: false, error: 'No active tab.' }); return; }
-          const ext = await extractArticleForTab(tab.id, tab.url || '');
+          let tabId: number | undefined = message.tabId;
+          let url: string = message.url || '';
+          let tabTitle: string | undefined = message.tabTitle;
+          if (!tabId) {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            tabId = tab?.id;
+            url = tab?.url || '';
+            tabTitle = tab?.title;
+          }
+          if (!tabId) { sendResponse({ ok: false, error: 'Could not find the active tab — click into the page once and retry.' }); return; }
+          const ext = await extractArticleForTab(tabId, url);
           if (!ext.ok) { sendResponse({ ok: false, error: ext.error }); return; }
           sendResponse({
             ok: true,
-            title: ext.data.title || tab.title || 'Article',
+            title: ext.data.title || tabTitle || 'Article',
             sentences: ext.data.sentences,
             text: ext.data.sentences.join(' '),
           });
-        } catch (e) {
+        } catch (e: any) {
           err('GET_ARTICLE_TEXT failed:', e);
-          sendResponse({ ok: false, error: 'Could not read this page.' });
+          sendResponse({ ok: false, error: `Could not read this page (${e?.message || 'unknown error'}). Try reloading it.` });
         }
       })();
       return true; // async response

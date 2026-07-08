@@ -76,11 +76,25 @@ function buildResult(title: string, rawText: string) {
   return { title: title || document.title || 'Article', byline: '', sentences, totalWords };
 }
 
+// Readability's .textContent (and any element's textContent) concatenates block
+// elements with NO separator — "…of a network.Example:One layer in…" — which breaks
+// sentence splitting (no whitespace after the period) AND page highlighting (the glued
+// token matches nothing in the word index). Derive text from the article HTML instead,
+// inserting explicit breaks at block boundaries; cleanText collapses them to spaces (E8).
+function htmlToText(html: string): string {
+  const withBreaks = html.replace(
+    /<\/?(p|div|li|ul|ol|h[1-6]|br|blockquote|tr|td|th|table|section|article|header|footer|figure|figcaption|pre|dt|dd)\b[^>]*>/gi,
+    '\n$&');
+  return new DOMParser().parseFromString(withBreaks, 'text/html').body?.textContent || '';
+}
+
 function parseDocWithReadability(doc: Document): { title: string; text: string } | null {
   try {
     const article = new Readability(doc).parse();
     if (article && article.textContent && cleanText(article.textContent).length > 250) {
-      return { title: article.title || '', text: article.textContent };
+      // Prefer block-aware text from the HTML; fall back to raw textContent.
+      const text = (article.content && htmlToText(article.content)) || article.textContent;
+      return { title: article.title || '', text };
     }
   } catch (e) { err('Readability error:', e); }
   return null;
@@ -150,8 +164,10 @@ async function extractArticle() {
   // 2. Known journal site selectors
   for (const [host, sel] of SITE_SELECTORS) {
     if (!host.test(location.hostname)) continue;
-    const el = document.querySelector(sel);
-    const txt = cleanText(el?.textContent || '');
+    const el = document.querySelector(sel) as HTMLElement | null;
+    // innerText (not textContent): the element is rendered, so innerText yields real
+    // line breaks at block boundaries instead of gluing paragraphs together (E8).
+    const txt = cleanText(el?.innerText || '');
     if (txt.length > 400) { log('Used site selector for', location.hostname); return buildResult(document.title, txt); }
   }
 
@@ -904,12 +920,16 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
   // ── Click-to-listen-from-here ──
   // Click a word in the article and playback jumps to its sentence. Skipped for
   // interactive elements, active text selections, and our own UI.
-  document.addEventListener('click', (e: MouseEvent) => {
+  // Double-click is an EXPLICIT "read from here": a double-click selects the word
+  // under the cursor, which used to trip the active-selection guard and silently
+  // eat the jump — so dblclick bypasses that guard and clears its own selection.
+  const jumpFromPoint = (e: MouseEvent, fromDblclick: boolean): void => {
     if (isSelectionMode || !wordsBuilt || !sentenceRuns.length) return;
     const tgt = e.target as HTMLElement;
     if (!tgt || tgt.closest?.('#spiel-panel-host, #spiel-sel-host')) return;
     if (tgt.closest?.('a, button, input, textarea, select, [contenteditable], video, audio')) return;
-    if ((window.getSelection()?.toString().trim().length ?? 0) > 0) return;
+    // Respect real user selections on single click only — dblclick made its own.
+    if (!fromDblclick && (window.getSelection()?.toString().trim().length ?? 0) > 0) return;
 
     const caret = (document as any).caretRangeFromPoint?.(e.clientX, e.clientY);
     const node = caret?.startContainer;
@@ -924,9 +944,18 @@ function createPanel(title: string, voice: string, speed: number, isSelection: b
     if (wordIdx < 0) return;
     const sIdx = sentenceIndexForWord(wordIdx);
     if (sIdx < 0) return;
-    log('Click-to-jump → sentence', sIdx);
+    if (fromDblclick) {
+      // The word-selection was a side effect of the double-click, not intent —
+      // clear it so the "Play selection" pill doesn't fight the jump.
+      window.getSelection()?.removeAllRanges();
+      hideSelectionButton();
+    }
+    log('Click-to-jump → sentence', sIdx, fromDblclick ? '(dblclick)' : '');
     chrome.runtime.sendMessage({ type: 'JUMP_TO', index: sIdx });
-  }, { signal: sig });
+  };
+
+  document.addEventListener('click', (e: MouseEvent) => jumpFromPoint(e, false), { signal: sig });
+  document.addEventListener('dblclick', (e: MouseEvent) => jumpFromPoint(e, true), { signal: sig });
 
   // ── Keyboard shortcuts (active only while the panel is open) ──
   document.addEventListener('keydown', (e: KeyboardEvent) => {
