@@ -6,6 +6,7 @@
 
 **Listen to any article or PDF with a natural AI voice — free, private, and 100% local.**
 
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/dkfdbjaghlaldbdleidhkinpekabffij?color=FF385C&label=chrome%20web%20store)](https://chromewebstore.google.com/detail/spiel/dkfdbjaghlaldbdleidhkinpekabffij)
 [![Release](https://img.shields.io/github/v/release/preet01/spiel?color=FF385C&label=release)](https://github.com/preet01/spiel/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-FF385C.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-1a1719.svg)](#install-2-steps-3-minutes)
@@ -14,7 +15,7 @@
 An open-source alternative to Speechify\* — without the $139/year, and without your
 reading history flowing through someone else's servers.
 
-**[Website](https://preet01.github.io/spiel/) · [Download](https://github.com/preet01/spiel/releases/latest) · [Report a bug](https://github.com/preet01/spiel/issues)**
+**[Add to Chrome](https://chromewebstore.google.com/detail/spiel/dkfdbjaghlaldbdleidhkinpekabffij) · [Website](https://preet01.github.io/spiel/) · [Report a bug](https://github.com/preet01/spiel/issues)**
 
 </div>
 
@@ -49,18 +50,16 @@ Built for students, researchers, and anyone who reads a lot and wants to pay not
 
 ### Step 1 — The extension
 
-**[⬇ Download the latest spiel-extension.zip](https://github.com/preet01/spiel/releases/latest)**, unzip it, then:
-
-1. Open `chrome://extensions`
-2. Toggle **Developer mode** ON (top-right)
-3. Click **Load unpacked** and pick the unzipped folder
-4. Pin the 🎙 Spiel icon to your toolbar
-
-> Keep the folder somewhere permanent (not Downloads) — Chrome loads the extension
-> from that exact path. *(A one-click Chrome Web Store install is coming.)*
+**[➕ Add Spiel to Chrome](https://chromewebstore.google.com/detail/spiel/dkfdbjaghlaldbdleidhkinpekabffij)** (Chrome Web Store, one click), then pin the 🎙 Spiel icon to your toolbar.
 
 <details>
-<summary><strong>Or build from source</strong></summary>
+<summary><strong>Or install manually / build from source</strong></summary>
+
+**Manual:** [download the latest spiel-extension.zip](https://github.com/preet01/spiel/releases/latest),
+unzip it somewhere permanent (not Downloads), open `chrome://extensions`, toggle
+**Developer mode** ON, click **Load unpacked**, and pick the unzipped folder.
+
+**From source:**
 
 ```bash
 git clone https://github.com/preet01/spiel.git
@@ -158,8 +157,8 @@ npm run package    # dist/ → spiel-extension.zip
 
 ## Roadmap
 
+- [x] Chrome Web Store listing — [live here](https://chromewebstore.google.com/detail/spiel/dkfdbjaghlaldbdleidhkinpekabffij)
 - [ ] **True one-click:** run the voice inside Chrome via WebGPU (no Terminal step at all)
-- [ ] Chrome Web Store listing
 - [ ] In-PDF page highlighting (Spiel Reader view)
 - [ ] Windows & Linux installers
 - [ ] More voices and languages
@@ -168,5 +167,3 @@ npm run package    # dist/ → spiel-extension.zip
 ## License & credits
 
 [MIT](LICENSE) © Harpreet Vishnoi. Built on excellent open-source work — see [THIRD_PARTY.md](docs/THIRD_PARTY.md) for full credits (Kokoro model & Kokoro-FastAPI, Apache-2.0; Mozilla Readability, Apache-2.0; pdf.js, Apache-2.0; and the CC BY voice datasets behind Kokoro).
-
-\* *Spiel is not affiliated with, endorsed by, or connected to Speechify Inc. in any way.*

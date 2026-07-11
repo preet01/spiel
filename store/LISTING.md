@@ -14,20 +14,20 @@ https://chrome.google.com/webstore/devconsole, upload `spiel-extension.zip`
 
 ## Summary (max 132 chars)
 
-> Read articles & PDFs aloud with a natural AI voice running 100% on your Mac. Private, free, open source. No cloud, no account.
+> Read any article or PDF aloud with a natural AI voice, 100% on your Mac. Private, free, open source. No cloud, no account.
 
-(128 chars)
+(122 chars)
 
 ## Description
 
 ```
 Spiel reads any article, blog post, PDF, or selection aloud with a natural neural
-voice — and unlike every other text-to-speech extension, the voice runs
-entirely on YOUR computer. Nothing you read is ever sent to a cloud server.
+voice. Unlike every other text-to-speech extension, everything runs entirely on
+YOUR computer. Nothing you read is ever sent to a cloud server.
 
 WHY SPIEL
-• 100% private — text-to-speech happens locally at 127.0.0.1. Turn off
-  Wi-Fi and it still works.
+• 100% private — text-to-speech happens locally at 127.0.0.1. Turn off Wi-Fi
+  and it still works.
 • Free forever — no account, no subscription, no trial. Open source (MIT).
 • Natural voices — powered by the Kokoro-82M neural TTS model.
 
@@ -35,7 +35,7 @@ FEATURES
 • One click to listen on any article or PDF (research papers included)
 • Word-by-word highlighting that follows the voice, with auto-scroll
 • Click any paragraph to listen from there
-• Select text on any page for instant playback
+• Select text on any page to read from there to the end
 • 4 curated voices (American/British, male/female), speed up to 3×
 • Time-remaining estimate, smart skipping of URLs and [references]
 • Dark mode throughout
@@ -47,19 +47,18 @@ that installs the engine. Paste it, wait two minutes, and your Mac will
 literally say "Spiel is ready." Requires macOS; Apple Silicon recommended.
 
 Open source: https://github.com/preet01/spiel
-Spiel is not affiliated with, endorsed by, or connected to Speechify Inc.
 ```
 
 ## Single-purpose statement
 
-> Spiel has one purpose: reading page text (web pages and PDFs) aloud (text-to-speech) using a speech engine that runs locally on the user's computer.
+> Spiel has one purpose: reading page text (web pages and PDFs) aloud (text-to-speech) using a voice engine that runs locally on the user's computer.
 
 ## Permission justifications
 
 | Permission | Justification to paste |
 |---|---|
 | `activeTab` | Used only when the user clicks the Spiel icon or presses Play, to read the text of the article the user asked to hear. No background access to browsing. |
-| `storage` | Stores the user's voice, speed, and skip preferences (sync) and transient playback state (session). No user content is stored. |
+| `storage` | Stores the user's voice and speed preferences (sync) and transient playback state (session). No user content is stored. |
 | `offscreen` | Chrome MV3 requires an offscreen document to play audio; the service worker cannot. Used solely for audio playback. |
 | `alarms` | Schedules a tiny periodic keep-warm request to the local speech engine so playback starts in under a second. No user data involved. |
 | `scripting` | Injects the reader (text extraction + word highlighting) into the page the user asked Spiel to read, on user action only. |
@@ -105,5 +104,6 @@ Spiel is not affiliated with, endorsed by, or connected to Speechify Inc.
 
 - The localhost fetch is the usual reviewer question — the single-purpose
   statement + host-permission justification above address it head-on.
-- "Alternative to Speechify" is intentionally NOT in the store name/summary
-  (trademark policy); the non-affiliation line covers the description.
+- The Speechify comparison (README/landing page) is intentionally kept out of
+  the store listing entirely — CWS spam/trademark policy frowns on competitor
+  names in listing metadata.

@@ -23,7 +23,3 @@ The Kokoro model was trained in part on these openly licensed datasets, credited
 |---|---|---|
 | [@mozilla/readability](https://github.com/mozilla/readability) | Apache-2.0 | Article text extraction |
 | [esbuild](https://github.com/evanw/esbuild) | MIT | Build tool (dev dependency, not shipped) |
-
-## Trademark note
-
-Speechify is a trademark of Speechify Inc. Spiel is an independent project, not affiliated with, endorsed by, or connected to Speechify Inc. The comparison in the README exists solely to describe what category of product this is.
